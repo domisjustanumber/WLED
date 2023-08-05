@@ -2995,8 +2995,8 @@ uint16_t WS2812FX::candle(bool multi)
   if (multi)
   {
     //allocate segment data
-    uint16_t dataSize = (SEGLEN -1) *3; //max. 1365 pixels (ESP8266)
-    if (!SEGENV.allocateData(dataSize)) return candle(false); //allocation failed
+    uint16_t dataSize = max(1, SEGLEN -1) *3; //max. 1365 pixels (ESP8266)
+    if ((SEGLEN < 2) || (!SEGENV.allocateData(dataSize))) return candle(false); //allocation failed
   }
 
   //max. flicker range controlled by intensity
@@ -3140,7 +3140,7 @@ uint16_t WS2812FX::mode_starburst_core(bool useAudio) {
     if ((doNewStar == true) && (stars[j].birth == 0))
     {
       // Pick a random color and location.
-      uint16_t startPos = random16(SEGLEN-1);
+      uint16_t startPos = (SEGLEN > 1) ? random16(SEGLEN-1) : 0;
       float multiplier = (float)(random8())/255.0 * 1.0;
 
       stars[j].color = col_to_crgb(color_wheel(random8()));
@@ -6343,7 +6343,7 @@ uint16_t WS2812FX::mode_blurz(void) {                    // Blurz. By Andrew Tul
   fade_out(SEGMENT.speed);
 
   uint16_t segLoc = random(SEGLEN);
-  leds[segmentToLogical(segLoc)] = color_blend(SEGCOLOR(1), color_from_palette(2*fftResult[SEGENV.aux0 % 16]*240/(SEGLEN-1), false, PALETTE_SOLID_WRAP, 0), 2*fftResult[SEGENV.aux0 % 16]);
+  leds[segmentToLogical(segLoc)] = color_blend(SEGCOLOR(1), color_from_palette((2*fftResult[SEGENV.aux0 % 16]*240)/max(1, SEGLEN-1), false, PALETTE_SOLID_WRAP, 0), 2*fftResult[SEGENV.aux0 % 16]);
   SEGENV.aux0++;
   SEGENV.aux0 = SEGENV.aux0 % 16;
 
