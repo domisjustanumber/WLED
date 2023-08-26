@@ -2113,7 +2113,7 @@ uint16_t WS2812FX::mode_railway()
 
 //4 bytes
 typedef struct Ripple {
-  uint8_t state;
+  int8_t state;
   uint8_t color;
   uint16_t pos;
 } ripple;

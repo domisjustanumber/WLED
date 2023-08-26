@@ -55,7 +55,7 @@ uint8_t targetAgc = 60;                         // This is our setPoint at 20% o
 uint8_t myVals[32];                             // Used to store a pile of samples because WLED frame rate and WLED sample rate are not synchronized. Frame rate is too low.
 bool samplePeak = 0;                            // Boolean flag for peak. Responding routine must reset this flag
 bool udpSamplePeak = 0;                         // Boolean flag for peak. Set at the same tiem as samplePeak, but reset by transmitAudioData
-int delayMs = 10;                               // I don't want to sample too often and overload WLED
+constexpr unsigned delayMs = 10;                               // I don't want to sample too often and overload WLED
 int micIn;                                      // Current sample starts with negative values and large values, which is why it's 16 bit signed
 int sample;                                     // Current sample. Must only be updated ONCE!!!
 int tmpSample;                                  // An interim sample variable used for calculatioins.
@@ -146,7 +146,7 @@ void getSample() {
 
   if (userVar1 == 0) samplePeak = 0;
   // Poor man's beat detection by seeing if sample > Average + some value.
-  if (sample > (sampleAvg + maxVol) && millis() > (peakTime + 100)) {
+  if ((sample > (sampleAvg + maxVol)) && ((millis() - peakTime) > 100)) {
   // Then we got a peak, else we don't. Display routines need to reset the samplepeak value in case they miss the trigger.
     samplePeak = 1;
     timeOfPeak = millis();

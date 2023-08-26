@@ -52,7 +52,7 @@ void userLoop() {
 
   // Begin UDP Microphone Sync
   if (audioSyncEnabled & (1 << 1)) {    // Only run the audio listener code if we're in Receive mode
-    if (millis()-lastTime > delayMs) {
+    if ((millis()-lastTime) > delayMs) {
       if (udpSyncConnected) {
         //Serial.println("Checking for UDP Microphone Packet");
         int packetSize = fftUdp.parsePacket();
