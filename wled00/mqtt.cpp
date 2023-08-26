@@ -5,6 +5,7 @@
  */
 
 #ifdef WLED_ENABLE_MQTT
+#warning MQTT enabled - this configuration is not officially supported
 #define MQTT_KEEP_ALIVE_TIME 60    // contact the MQTT broker every 60 seconds
 
 void parseMQTTBriPayload(char* payload)

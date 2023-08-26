@@ -7,6 +7,7 @@
 #if defined(WLED_DISABLE_INFRARED)
 void handleIR(){}
 #else
+#warning IR enabled - this configuration is not officially supported
 
 IRrecv* irrecv;
 //change pin in NpbWrapper.h
