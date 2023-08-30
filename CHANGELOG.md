@@ -24,6 +24,7 @@
 ## WLED upstream changelog
 
 ### Upstream changes backported to WLED-SR
+-   Additonal Ethernet boards: ABC! WLED V43, QuinLED-Dig-Octa + T-ETH-POE, Serg74-ETH32
 -   bugfix for large presets files (>64Kb) 
 -   updated NeoPixelBus to 2.7.1
 -   Fixed APA102 output on Ethernet enabled controllers

@@ -92,12 +92,42 @@ const ethernet_settings ethernetBoards[] = {
 
   // ESP32-ETHERNET-KIT-VE
   {
-    0,                    // eth_address, 
-    5,                   // eth_power, 
+    0,                    // eth_address,
+    5,                    // eth_power,
+    23,                   // eth_mdc,
+    18,                   // eth_mdio,
+    ETH_PHY_IP101,        // eth_type,
+    ETH_CLOCK_GPIO0_IN    // eth_clk_mode
+  },
+
+  // QuinLed-Dig-Octa Brainboard-32-8L and LilyGO-T-ETH-POE
+  {
+    0,			              // eth_address,
+    -1,			              // eth_power,
+    23,			              // eth_mdc,
+    18,			              // eth_mdio,
+    ETH_PHY_LAN8720,      // eth_type,
+    ETH_CLOCK_GPIO17_OUT	// eth_clk_mode
+  },
+
+  // ABC! WLED Controller V43 + Ethernet Shield & compatible
+  {
+    1,                    // eth_address, 
+    5,                    // eth_power, 
     23,                   // eth_mdc, 
-    18,                   // eth_mdio, 
-    ETH_PHY_IP101,     // eth_type,
-    ETH_CLOCK_GPIO0_IN  // eth_clk_mode
+    33,                   // eth_mdio, 
+    ETH_PHY_LAN8720,      // eth_type,
+    ETH_CLOCK_GPIO17_OUT	// eth_clk_mode
+  },
+
+  // Serg74-ESP32 Ethernet Shield
+  {
+    1,                    // eth_address,
+    5,                    // eth_power,
+    23,                   // eth_mdc,
+    18,                   // eth_mdio,
+    ETH_PHY_LAN8720,      // eth_type,
+    ETH_CLOCK_GPIO17_OUT  // eth_clk_mode
   }
 };
 #endif
