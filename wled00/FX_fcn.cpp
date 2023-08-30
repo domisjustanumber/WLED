@@ -419,7 +419,7 @@ void WS2812FX::show(void) {
   unsigned long diff = now - _lastShow;
   uint16_t fpsCurr = 200;
   if (diff > 0) fpsCurr = 1000 / diff;
-  _cumulativeFps = (3 * _cumulativeFps + fpsCurr) >> 2;
+  _cumulativeFps = (3 * _cumulativeFps + fpsCurr +2) >> 2;   // "+2" for proper rounding (2/4 = 0.5)
   _lastShow = now;
 }
 
