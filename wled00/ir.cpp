@@ -7,6 +7,7 @@
 #if defined(WLED_DISABLE_INFRARED)
 void handleIR(){}
 #else
+#warning IR enabled. IR Remotes are not officially supported in WLED-SR
 
 IRrecv* irrecv;
 //change pin in NpbWrapper.h
@@ -68,17 +69,6 @@ void decBrightness()
   }
 }
 
-// apply preset or fallback to a effect and palette if it doesn't exist
-void presetFallback(uint8_t presetID, uint8_t effectID, uint8_t paletteID)
-{
-  byte prevError = errorFlag;
-  if (!applyPreset(presetID, CALL_MODE_BUTTON_PRESET)) {
-    effectCurrent = effectID;
-    effectPalette = paletteID;
-    errorFlag = prevError; //clear error 12 from non-existent preset
-  }
-}
-
 byte relativeChange(byte property, int8_t amount, byte lowerBoundary, byte higherBoundary)
 {
   int16_t new_val = (int16_t) property + amount;
@@ -118,6 +108,19 @@ void changePalette(uint8_t pal)
     setValuesFromMainSeg();
   }
   stateChanged = true;
+}
+
+// apply preset or fallback to a effect and palette if it doesn't exist
+void presetFallback(uint8_t presetID, uint8_t effectID, uint8_t paletteID)
+{
+  byte prevError = errorFlag;
+  if (!applyPreset(presetID, CALL_MODE_BUTTON_PRESET)) {
+    effectCurrent = effectID;
+    effectPalette = paletteID;
+    errorFlag = prevError; //clear error 12 from non-existent preset
+    changeEffect(effectCurrent);
+    changePalette(effectPalette);
+  }
 }
 
 void changeEffectSpeed(int8_t amount)
