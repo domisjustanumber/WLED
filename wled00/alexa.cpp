@@ -10,6 +10,8 @@
 #include "src/dependencies/espalexa/EspalexaDevice.h"
 
 #ifndef WLED_DISABLE_ALEXA
+#warning Alexa enabled. Alexa is not officially supported in WLED-SR
+
 void onAlexaChange(EspalexaDevice* dev);
 
 void alexaInit()

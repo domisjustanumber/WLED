@@ -8,7 +8,7 @@
  */
 
 // version code in format yymmddb (b = daily build)
-#define VERSION 2308301                // WLEDSR specific version
+#define VERSION 2309021                // WLEDSR specific version
 #define SR_VERSION_NAME "0.13.4-beta"  // WLEDSR version name --> some files need manual updating: package.json, package-lock.json, improv.cpp
 
 #define AC_VERSION 2208222             // AC WLED base version; last updated by PR #239 -> Merge AC-0.13.3 into dev
@@ -32,10 +32,10 @@
 #endif
 
 // You need to choose some of these features to disable:
-#define WLED_DISABLE_ALEXA         // saves 11kb
+//#define WLED_DISABLE_ALEXA         // saves 11kb
 #define WLED_DISABLE_BLYNK         // saves 6kb
 #define WLED_DISABLE_HUESYNC       // saves 4kb
-#define WLED_DISABLE_INFRARED      // there is no pin left for this on ESP8266-01, saves 12kb
+// #define WLED_DISABLE_INFRARED      // there is no pin left for this on ESP8266-01, saves 12kb
 #ifndef WLED_DISABLE_MQTT
   #define WLED_ENABLE_MQTT         // saves 12kb
 #endif
