@@ -14,7 +14,7 @@
 
 This is the SR `main` branch - the source code for our latest release [version WLED-SR v0.13.4](https://github.com/atuline/WLED/releases). This branch can be a stable baseline for your own project.
 
-- For ESP32 devices (8266 no longer supported).
+- For ESP32 devices only (8266 no longer supported).
 - SoundReactiv WLED has been integrated into the latest ["upstream" WLED](https://github.com/Aircoookie/WLED) as a [usermod](https://github.com/Aircoookie/WLED/tree/main/usermods/audioreactive).
 - ESP32-S2, ESP32-S3 and ESP32-C3 are not supported by this fork. Please look into the [MoonModules WLED fork](https://github.com/MoonModules/WLED) if you have one of these boards.
 - This repository is still maintained, and will receive bugfixes. However no new features will be added.
