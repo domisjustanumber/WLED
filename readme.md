@@ -10,13 +10,15 @@
 
   </p>
 
-# Development Branch
+# Stable Branch
 
-This is the SR `dev`elopment branch, where we test new features and enhancements. The code may or may not work - it is work in progress.
+This is the SR `main` branch - the source code for our latest release [version WLED-SR v0.13.4](https://github.com/atuline/WLED/releases). This branch can be a stable baseline for your own project.
 
-- For ESP32 devices (8266 no longer supported)
-- *Pull Requests* should be created against this `dev` branch.
-- If you are looking for a stable baseline for your own project, please use the released source code from [`master` branch](https://github.com/atuline/WLED/tree/master)
+- For ESP32 devices (8266 no longer supported).
+- SoundReactiv WLED has been integrated into the latest ["upstream" WLED](https://github.com/Aircoookie/WLED) as a [usermod](https://github.com/Aircoookie/WLED/tree/main/usermods/audioreactive).
+- ESP32-S2, ESP32-S3 and ESP32-C3 are not supported by this fork. Please look into the [MoonModules WLED fork](https://github.com/MoonModules/WLED) if you have one of these boards.
+- This repository is still maintained, and will receive bugfixes. However no new features will be added.
+- *Pull Requests* should be created against the [MoonModules `mdev` branch](https://github.com/MoonModules/WLED/tree/mdev).
 
 
 
