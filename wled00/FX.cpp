@@ -9197,6 +9197,578 @@ uint16_t mode_2DPaintbrush() {
 } // mode_2DPaintbrush()
 static const char _data_FX_MODE_2DPAINTBRUSH[] PROGMEM = "Paintbrush ☾@Oscillator Offset,# of lines,Fade Rate,,Min Length,Color Chaos,Anti-aliasing,Phase Chaos;!,,Peaks;!;2f;sx=160,ix=255,c1=80,c2=255,c3=0,pal=72,o1=0,o2=1,o3=0";
 
+
+/////////////////////////
+// 2D Vocal Particles  //
+/////////////////////////
+/*
+ * Vocal Particles
+ * 
+ * A voice-reactive particle effect that emits shimmering particles in a circular burst
+ * from the center when sounds in the human voice frequency range are detected.
+ * The effect remains dark/off when silent, then explodes with particles when speech
+ * or singing is detected. Particle emission is continuous while voice is present.
+ * 
+ * Audio Analysis:
+ *   - Monitors FFT bins 4-9 (approximately 301-1895 Hz) which correspond to human voice
+ *   - Particle spawn rate and count scale with voice energy intensity
+ *   - Continuous emission while voice is detected (not just triggered bursts)
+ * 
+ * Visual Design:
+ *   - 2D: Particles burst outward in all directions from center
+ *   - 1D: Particles shoot outward from center in both directions
+ *   - Each particle has individual velocity, brightness, and color
+ *   - Particles fade and shimmer as they travel outward
+ *   - Multiple particles blend together for rich, layered visuals
+ * 
+ * Parameters:
+ *   - Speed: Particle velocity / emission rate
+ *   - Intensity: Particle brightness and density
+ *   - Custom1 (Fade): Particle fade rate - lower = longer trails
+ *   - Custom2 (Shimmer): Sparkle/noise intensity on particles
+ *   - Custom3 (Blur): Optional blur for softer, dreamier trails
+ * 
+ * Works for both 1D LED strips and 2D LED matrices.
+ * 
+ * Author: @domisjustanumber
+ * @license GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
+ */
+uint16_t mode_VocalParticles(void) {
+  const bool is2D = strip.isMatrix;
+  
+  // Dimensions based on 1D or 2D setup
+  const uint16_t cols = is2D ? SEGMENT.virtualWidth() : SEGMENT.virtualLength();
+  const uint16_t rows = is2D ? SEGMENT.virtualHeight() : 1;
+  const float centerX = cols / 2.0f;
+  const float centerY = rows / 2.0f;
+  const uint16_t maxDist = is2D ? sqrt16((cols/2)*(cols/2) + (rows/2)*(rows/2)) + 5 : (cols / 2) + 5;
+
+  // Particle structure with floating point position for smooth movement
+  typedef struct {
+    float x;           // Position X (sub-pixel precision)
+    float y;           // Position Y (sub-pixel precision)
+    float vx;          // Velocity X
+    float vy;          // Velocity Y
+    uint16_t brightness; // 16-bit for smooth fading
+    uint8_t colorIndex;
+    uint8_t active;    // 0 = inactive, 1 = active
+  } Particle;
+  
+  const uint8_t MAX_PARTICLES = 64; // Maximum number of simultaneous particles
+  const size_t dataSize = sizeof(Particle) * MAX_PARTICLES;
+  if (!SEGENV.allocateData(dataSize)) return mode_oops();
+  
+  Particle *particles = reinterpret_cast<Particle*>(SEGENV.data);
+
+  // Get audio data
+  um_data_t *um_data = getAudioData();
+  float volumeSmth = *(float*)um_data->u_data[0];
+  uint8_t fftResult[NUM_GEQ_CHANNELS] = {0};
+  if (um_data->u_data != nullptr) memcpy(fftResult, um_data->u_data[2], sizeof(fftResult));
+
+  if (SEGENV.call == 0) {
+    SEGMENT.setUpLeds();
+    SEGMENT.fill(BLACK);
+    // Initialize particles
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+      particles[i].active = 0;
+      particles[i].brightness = 0;
+    }
+  }
+
+  // Calculate voice frequency energy (bins 4-9: 301-1895 Hz)
+  uint16_t voiceEnergy = 0;
+  for (int i = 4; i <= 9; i++) {
+    voiceEnergy += fftResult[i];
+  }
+  voiceEnergy = voiceEnergy / 6; // Average of voice bins
+  
+  // Combine with overall volume for voice detection
+  float audioResponse = (voiceEnergy * 0.7f) + (volumeSmth * 30.0f * 0.3f);
+  audioResponse = constrain(audioResponse, 0.0f, 255.0f);
+  
+  // Voice detection threshold
+  const float VOICE_THRESHOLD = 25.0f;
+  bool voiceDetected = (audioResponse > VOICE_THRESHOLD) && (volumeSmth > 0.5f);
+  
+  // Spawn particles when voice is detected
+  // Number of particles to spawn scales with voice energy
+  if (voiceDetected) {
+    // Calculate how many particles to spawn this frame (1-4 based on intensity and voice energy)
+    uint8_t spawnCount = 1 + (audioResponse * SEGMENT.intensity) / 16384;
+    spawnCount = min((uint8_t)4, spawnCount);
+    
+    // Speed factor for particle velocity
+    float speedFactor = 0.5f + (SEGMENT.speed / 128.0f); // 0.5 to 2.5
+    
+    for (uint8_t s = 0; s < spawnCount; s++) {
+      // Find an inactive particle slot
+      int slot = -1;
+      for (int i = 0; i < MAX_PARTICLES; i++) {
+        if (!particles[i].active) {
+          slot = i;
+          break;
+        }
+      }
+      
+      if (slot >= 0) {
+        // Spawn new particle at center
+        particles[slot].x = centerX;
+        particles[slot].y = centerY;
+        particles[slot].active = 1;
+        particles[slot].brightness = 65535; // Full brightness
+        
+        // Random color based on voice energy
+        particles[slot].colorIndex = (voiceEnergy * 2) + random8();
+        
+        if (is2D) {
+          // Random angle for circular emission
+          uint8_t angle = random8(); // 0-255 maps to 0-360 degrees
+          float rad = (angle / 255.0f) * 2.0f * PI;
+          
+          // Velocity with some randomness
+          float speed = speedFactor * (0.8f + random8() / 512.0f); // Add variation
+          particles[slot].vx = cos(rad) * speed;
+          particles[slot].vy = sin(rad) * speed;
+        } else {
+          // 1D: Random direction left or right
+          float speed = speedFactor * (0.8f + random8() / 512.0f);
+          particles[slot].vx = (random8() > 127) ? speed : -speed;
+          particles[slot].vy = 0;
+        }
+      }
+    }
+  }
+
+  // Fade the display (creates trails)
+  uint8_t fadeAmount = 32 + (SEGMENT.custom1 >> 1); // 32-159 fade per frame
+  SEGMENT.fadeToBlackBy(fadeAmount);
+  
+  // Shimmer amount
+  uint8_t shimmerAmount = SEGMENT.custom2;
+  
+  // Update and render all active particles
+  for (int i = 0; i < MAX_PARTICLES; i++) {
+    if (!particles[i].active) continue;
+    
+    // Move particle
+    particles[i].x += particles[i].vx;
+    particles[i].y += particles[i].vy;
+    
+    // Fade particle brightness
+    uint16_t fadeRate = 256 + (SEGMENT.custom1 << 2); // Faster individual fade
+    if (particles[i].brightness > fadeRate) {
+      particles[i].brightness -= fadeRate;
+    } else {
+      particles[i].brightness = 0;
+      particles[i].active = 0;
+      continue;
+    }
+    
+    // Check bounds and deactivate if out of range
+    float dist;
+    if (is2D) {
+      float dx = particles[i].x - centerX;
+      float dy = particles[i].y - centerY;
+      dist = sqrtf(dx*dx + dy*dy);
+    } else {
+      dist = fabsf(particles[i].x - centerX);
+    }
+    
+    if (dist > maxDist || particles[i].x < -1 || particles[i].x >= cols + 1 || 
+        particles[i].y < -1 || particles[i].y >= rows + 1) {
+      particles[i].active = 0;
+      continue;
+    }
+    
+    // Calculate pixel brightness
+    uint8_t pixelBrightness = particles[i].brightness >> 8;
+    if (pixelBrightness == 0 && particles[i].brightness > 0) pixelBrightness = 1;
+    
+    // Apply shimmer
+    if (shimmerAmount > 0) {
+      uint16_t noiseVal = inoise16((uint16_t)(particles[i].x * 1000), 
+                                    (uint16_t)(particles[i].y * 1000), 
+                                    strip.now * 50);
+      uint8_t noise8 = noiseVal >> 8;
+      int16_t shimmerDelta = ((int16_t)noise8 - 128) * shimmerAmount / 192;
+      int16_t newBrightness = (int16_t)pixelBrightness + shimmerDelta;
+      
+      // Random bright sparkles
+      if (noise8 > 245 && shimmerAmount > 64) {
+        newBrightness = min(255, newBrightness + shimmerAmount);
+      }
+      pixelBrightness = constrain(newBrightness, 0, 255);
+    }
+    
+    // Apply intensity scaling
+    pixelBrightness = scale8(pixelBrightness, SEGMENT.intensity);
+    
+    // Get color from palette
+    uint8_t colorIndex = particles[i].colorIndex + (uint8_t)(dist * 4);
+    CRGB color = ColorFromPalette(SEGPALETTE, colorIndex, pixelBrightness, LINEARBLEND);
+    
+    // Render particle (with sub-pixel blending for smoothness)
+    int16_t px = (int16_t)particles[i].x;
+    int16_t py = (int16_t)particles[i].y;
+    
+    if (is2D) {
+      // Sub-pixel rendering for smooth particle movement
+      uint8_t fracX = (uint8_t)((particles[i].x - px) * 255);
+      uint8_t fracY = (uint8_t)((particles[i].y - py) * 255);
+      
+      // Render to 4 neighboring pixels with weighted brightness
+      if (px >= 0 && px < cols && py >= 0 && py < rows) {
+        CRGB c = color;
+        c.nscale8(scale8(255 - fracX, 255 - fracY));
+        SEGMENT.addPixelColorXY(px, py, c);
+      }
+      if (px + 1 >= 0 && px + 1 < cols && py >= 0 && py < rows) {
+        CRGB c = color;
+        c.nscale8(scale8(fracX, 255 - fracY));
+        SEGMENT.addPixelColorXY(px + 1, py, c);
+      }
+      if (px >= 0 && px < cols && py + 1 >= 0 && py + 1 < rows) {
+        CRGB c = color;
+        c.nscale8(scale8(255 - fracX, fracY));
+        SEGMENT.addPixelColorXY(px, py + 1, c);
+      }
+      if (px + 1 >= 0 && px + 1 < cols && py + 1 >= 0 && py + 1 < rows) {
+        CRGB c = color;
+        c.nscale8(scale8(fracX, fracY));
+        SEGMENT.addPixelColorXY(px + 1, py + 1, c);
+      }
+    } else {
+      // 1D: Sub-pixel rendering
+      uint8_t fracX = (uint8_t)((particles[i].x - px) * 255);
+      
+      if (px >= 0 && px < cols) {
+        CRGB c = color;
+        c.nscale8(255 - fracX);
+        SEGMENT.addPixelColor(px, c);
+      }
+      if (px + 1 >= 0 && px + 1 < cols) {
+        CRGB c = color;
+        c.nscale8(fracX);
+        SEGMENT.addPixelColor(px + 1, c);
+      }
+    }
+  }
+
+  // Optional blur for softer trails
+  if (SEGMENT.custom3 > 0) {
+    SEGMENT.blur(SEGMENT.custom3);
+  }
+
+  return FRAMETIME;
+} // mode_VocalParticles()
+static const char _data_FX_MODE_VOCALPARTICLES[] PROGMEM = "Vocal Particles ☾@Speed,Intensity,Fade,Shimmer,Blur;;!;12f;ix=192,c1=32,c2=64,c3=16,si=0";
+
+/////////////////////////
+//   2D Vocal Echo     //
+/////////////////////////
+/*
+ * Vocal Echo
+ * 
+ * A voice-reactive effect that creates expanding rings of randomly scattered particles
+ * when sounds in the human voice frequency range are detected. Each voice detection
+ * triggers a new ring that expands outward with particles randomly distributed along it.
+ * 
+ * Audio Analysis:
+ *   - Monitors FFT bins 4-9 (approximately 301-1895 Hz) which correspond to human voice
+ *   - Each voice trigger spawns a new expanding ring
+ *   - Ring brightness and particle density scale with voice energy
+ * 
+ * Visual Design:
+ *   - 2D: Expanding circular rings with particles scattered around the circumference
+ *   - 1D: Expanding bands with particles scattered within them
+ *   - Particles shimmer and twinkle as rings expand
+ *   - Multiple rings can overlap creating layered echo effects
+ * 
+ * Parameters:
+ *   - Speed: Ring expansion speed and trigger sensitivity
+ *   - Intensity: Particle brightness and ring density
+ *   - Custom1 (Fade): Ring fade rate - lower = longer lasting rings
+ *   - Custom2 (Density): Particle density on each ring
+ *   - Custom3 (Blur): Optional blur for softer appearance
+ * 
+ * Works for both 1D LED strips and 2D LED matrices.
+ * 
+ * Author: @domisjustanumber
+ * @license GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
+ */
+uint16_t mode_VocalEcho(void) {
+  const bool is2D = strip.isMatrix;
+  
+  // Dimensions based on 1D or 2D setup
+  const uint16_t cols = is2D ? SEGMENT.virtualWidth() : SEGMENT.virtualLength();
+  const uint16_t rows = is2D ? SEGMENT.virtualHeight() : 1;
+  const float centerX = cols / 2.0f;
+  const float centerY = rows / 2.0f;
+  const uint16_t maxDist = is2D ? sqrt16((cols/2)*(cols/2) + (rows/2)*(rows/2)) + 10 : (cols / 2) + 5;
+
+  // Ring structure - each ring expands outward
+  typedef struct {
+    float radius;         // Current radius of the ring
+    uint16_t brightness;  // 16-bit for smooth fading
+    uint8_t colorIndex;   // Base color for this ring
+    uint8_t particleSeed; // Random seed for particle positions on this ring
+    uint8_t active;       // 0 = inactive, 1 = active
+  } Ring;
+  
+  const uint8_t MAX_RINGS = 8; // Maximum number of simultaneous rings
+  const size_t dataSize = sizeof(Ring) * MAX_RINGS + sizeof(uint32_t); // rings + lastTriggerTime
+  if (!SEGENV.allocateData(dataSize)) return mode_oops();
+  
+  Ring *rings = reinterpret_cast<Ring*>(SEGENV.data);
+  uint32_t *lastTriggerTime = reinterpret_cast<uint32_t*>(SEGENV.data + sizeof(Ring) * MAX_RINGS);
+
+  // Get audio data
+  um_data_t *um_data = getAudioData();
+  float volumeSmth = *(float*)um_data->u_data[0];
+  uint8_t fftResult[NUM_GEQ_CHANNELS] = {0};
+  if (um_data->u_data != nullptr) memcpy(fftResult, um_data->u_data[2], sizeof(fftResult));
+
+  if (SEGENV.call == 0) {
+    SEGMENT.setUpLeds();
+    SEGMENT.fill(BLACK);
+    // Initialize rings
+    for (int i = 0; i < MAX_RINGS; i++) {
+      rings[i].active = 0;
+      rings[i].brightness = 0;
+      rings[i].radius = 0;
+    }
+    *lastTriggerTime = 0;
+  }
+
+  // Calculate voice frequency energy (bins 4-9: 301-1895 Hz)
+  uint16_t voiceEnergy = 0;
+  for (int i = 4; i <= 9; i++) {
+    voiceEnergy += fftResult[i];
+  }
+  voiceEnergy = voiceEnergy / 6; // Average of voice bins
+  
+  // Combine with overall volume for voice detection
+  float audioResponse = (voiceEnergy * 0.7f) + (volumeSmth * 30.0f * 0.3f);
+  audioResponse = constrain(audioResponse, 0.0f, 255.0f);
+  
+  // Voice detection threshold and trigger cooldown
+  const float VOICE_THRESHOLD = 30.0f;
+  bool voiceDetected = (audioResponse > VOICE_THRESHOLD) && (volumeSmth > 1.0f);
+  
+  // Minimum time between ring spawns (controlled by speed)
+  uint32_t triggerInterval = 100 + ((255 - SEGMENT.speed) * 3); // 100-865ms
+  uint32_t timeSinceLastTrigger = strip.now - *lastTriggerTime;
+  
+  // Spawn new ring when voice is detected
+  if (voiceDetected && (timeSinceLastTrigger > triggerInterval)) {
+    // Find an inactive ring slot
+    int slot = -1;
+    for (int i = 0; i < MAX_RINGS; i++) {
+      if (!rings[i].active) {
+        slot = i;
+        break;
+      }
+    }
+    
+    // If no empty slot, replace the oldest (largest radius) ring
+    if (slot < 0) {
+      float maxRadius = 0;
+      for (int i = 0; i < MAX_RINGS; i++) {
+        if (rings[i].radius > maxRadius) {
+          maxRadius = rings[i].radius;
+          slot = i;
+        }
+      }
+    }
+    
+    if (slot >= 0) {
+      rings[slot].radius = 0;
+      rings[slot].brightness = 65535; // Full brightness
+      rings[slot].colorIndex = (voiceEnergy * 2) + (uint8_t)(volumeSmth * 3);
+      rings[slot].particleSeed = random8(); // Unique seed for particle distribution
+      rings[slot].active = 1;
+      *lastTriggerTime = strip.now;
+    }
+  }
+
+  // Fade the display (creates trails/glow)
+  uint8_t fadeAmount = 48 + (SEGMENT.custom1 >> 1); // 48-175
+  SEGMENT.fadeToBlackBy(fadeAmount);
+  
+  // Particle density on rings (controlled by custom2)
+  uint8_t particleDensity = 8 + (SEGMENT.custom2 >> 2); // 8-71 particles per ring
+  
+  // Ring expansion speed
+  float expansionSpeed = 0.3f + (SEGMENT.speed / 200.0f); // 0.3 to 1.6 pixels per frame
+  
+  // Update and render all active rings
+  for (int r = 0; r < MAX_RINGS; r++) {
+    if (!rings[r].active) continue;
+    
+    // Expand ring
+    rings[r].radius += expansionSpeed;
+    
+    // Fade ring brightness
+    uint16_t fadeRate = 128 + (SEGMENT.custom1 << 1); // 128-638 per frame
+    if (rings[r].brightness > fadeRate) {
+      rings[r].brightness -= fadeRate;
+    } else {
+      rings[r].brightness = 0;
+      rings[r].active = 0;
+      continue;
+    }
+    
+    // Deactivate if ring is too large
+    if (rings[r].radius > maxDist) {
+      rings[r].active = 0;
+      continue;
+    }
+    
+    // Calculate base brightness for this ring
+    uint8_t ringBrightness = rings[r].brightness >> 8;
+    if (ringBrightness == 0 && rings[r].brightness > 0) ringBrightness = 1;
+    
+    // Ring width (gets wider as it expands for a softer look)
+    float ringWidth = 1.5f + (rings[r].radius / 15.0f);
+    if (ringWidth > 4.0f) ringWidth = 4.0f;
+    
+    if (is2D) {
+      // 2D: Render particles scattered around the ring circumference
+      // Use the ring's seed for consistent particle positions as ring expands
+      uint8_t seed = rings[r].particleSeed;
+      
+      for (int p = 0; p < particleDensity; p++) {
+        // Generate pseudo-random angle for this particle using seed
+        // This keeps particles in same relative positions as ring expands
+        uint8_t angleOffset = (seed * 37 + p * 67) & 0xFF; // 0-255
+        float angle = (angleOffset / 255.0f) * 2.0f * PI;
+        
+        // Calculate particle position on ring with slight random offset
+        uint8_t radiusJitter = ((seed * 13 + p * 41) & 0x1F); // 0-31
+        float particleRadius = rings[r].radius + (radiusJitter / 16.0f) - 1.0f;
+        
+        float px = centerX + cos(angle) * particleRadius;
+        float py = centerY + sin(angle) * particleRadius;
+        
+        // Skip if outside bounds
+        if (px < 0 || px >= cols || py < 0 || py >= rows) continue;
+        
+        // Calculate brightness with shimmer
+        uint8_t pixelBrightness = ringBrightness;
+        
+        // Add shimmer based on particle and time
+        uint16_t shimmerNoise = inoise16((uint16_t)(angle * 1000), strip.now * 30, p * 500);
+        uint8_t shimmer = shimmerNoise >> 8;
+        int16_t shimmerDelta = ((int16_t)shimmer - 128) / 3;
+        
+        // Random twinkle for some particles
+        if (shimmer > 230) {
+          shimmerDelta += 40;
+        }
+        
+        int16_t newBrightness = (int16_t)pixelBrightness + shimmerDelta;
+        pixelBrightness = constrain(newBrightness, 0, 255);
+        
+        // Apply intensity
+        pixelBrightness = scale8(pixelBrightness, SEGMENT.intensity);
+        
+        // Color varies slightly per particle
+        uint8_t colorIndex = rings[r].colorIndex + (angleOffset >> 3);
+        CRGB color = ColorFromPalette(SEGPALETTE, colorIndex, pixelBrightness, LINEARBLEND);
+        
+        // Sub-pixel rendering for smoothness
+        int16_t ix = (int16_t)px;
+        int16_t iy = (int16_t)py;
+        uint8_t fracX = (uint8_t)((px - ix) * 255);
+        uint8_t fracY = (uint8_t)((py - iy) * 255);
+        
+        if (ix >= 0 && ix < cols && iy >= 0 && iy < rows) {
+          CRGB c = color;
+          c.nscale8(scale8(255 - fracX, 255 - fracY));
+          SEGMENT.addPixelColorXY(ix, iy, c);
+        }
+        if (ix + 1 < cols && iy >= 0 && iy < rows) {
+          CRGB c = color;
+          c.nscale8(scale8(fracX, 255 - fracY));
+          SEGMENT.addPixelColorXY(ix + 1, iy, c);
+        }
+        if (ix >= 0 && ix < cols && iy + 1 < rows) {
+          CRGB c = color;
+          c.nscale8(scale8(255 - fracX, fracY));
+          SEGMENT.addPixelColorXY(ix, iy + 1, c);
+        }
+        if (ix + 1 < cols && iy + 1 < rows) {
+          CRGB c = color;
+          c.nscale8(scale8(fracX, fracY));
+          SEGMENT.addPixelColorXY(ix + 1, iy + 1, c);
+        }
+      }
+    } else {
+      // 1D: Render particles scattered within the ring band (both directions from center)
+      uint8_t seed = rings[r].particleSeed;
+      
+      // Ring spans from (center - radius - width) to (center - radius) and (center + radius) to (center + radius + width)
+      float innerRadius = rings[r].radius;
+      float outerRadius = rings[r].radius + ringWidth;
+      
+      for (int p = 0; p < particleDensity; p++) {
+        // Pseudo-random position within ring band
+        uint8_t posOffset = (seed * 37 + p * 67) & 0xFF;
+        float relPos = (posOffset / 255.0f) * ringWidth;
+        float dist = innerRadius + relPos;
+        
+        // Decide left or right side based on another pseudo-random value
+        bool rightSide = ((seed * 13 + p * 41) & 0x01);
+        
+        float px = rightSide ? (centerX + dist) : (centerX - dist);
+        
+        // Skip if outside bounds
+        if (px < 0 || px >= cols) continue;
+        
+        // Calculate brightness with shimmer
+        uint8_t pixelBrightness = ringBrightness;
+        uint16_t shimmerNoise = inoise16(p * 1000, strip.now * 40, seed * 100);
+        uint8_t shimmer = shimmerNoise >> 8;
+        int16_t shimmerDelta = ((int16_t)shimmer - 128) / 3;
+        
+        if (shimmer > 230) shimmerDelta += 40;
+        
+        int16_t newBrightness = (int16_t)pixelBrightness + shimmerDelta;
+        pixelBrightness = constrain(newBrightness, 0, 255);
+        pixelBrightness = scale8(pixelBrightness, SEGMENT.intensity);
+        
+        // Color
+        uint8_t colorIndex = rings[r].colorIndex + (posOffset >> 3);
+        CRGB color = ColorFromPalette(SEGPALETTE, colorIndex, pixelBrightness, LINEARBLEND);
+        
+        // Sub-pixel rendering
+        int16_t ix = (int16_t)px;
+        uint8_t fracX = (uint8_t)((px - ix) * 255);
+        
+        if (ix >= 0 && ix < cols) {
+          CRGB c = color;
+          c.nscale8(255 - fracX);
+          SEGMENT.addPixelColor(ix, c);
+        }
+        if (ix + 1 >= 0 && ix + 1 < cols) {
+          CRGB c = color;
+          c.nscale8(fracX);
+          SEGMENT.addPixelColor(ix + 1, c);
+        }
+      }
+    }
+  }
+
+  // Optional blur for softer appearance
+  if (SEGMENT.custom3 > 0) {
+    SEGMENT.blur(SEGMENT.custom3);
+  }
+
+  return FRAMETIME;
+} // mode_VocalEcho()
+static const char _data_FX_MODE_VOCALECHO[] PROGMEM = "Vocal Echo ☾@Speed,Intensity,Fade,Density,Blur;;!;12f;ix=192,c1=24,c2=128,c3=8,si=0";
+
 #ifndef WLED_DISABLE_PARTICLESYSTEM2D
 /*
   Particle System Vortex
@@ -12218,6 +12790,9 @@ void WS2812FX::setupEffectData() {
   addEffect(FX_MODE_GEQLASER, &mode_GEQLASER, _data_FX_MODE_GEQLASER); // audio
 
   addEffect(FX_MODE_2DPAINTBRUSH, &mode_2DPaintbrush, _data_FX_MODE_2DPAINTBRUSH); // audio
+
+  addEffect(FX_MODE_VOCALPARTICLES, &mode_VocalParticles, _data_FX_MODE_VOCALPARTICLES); // Vocal Particles - voice-reactive particle bursts
+  addEffect(FX_MODE_VOCALECHO, &mode_VocalEcho, _data_FX_MODE_VOCALECHO); // Vocal Echo - voice-reactive expanding particle rings
 
 #ifndef WLED_DISABLE_PARTICLESYSTEM2D
   addEffect(FX_MODE_PARTICLEVOLCANO, &mode_particlevolcano, _data_FX_MODE_PARTICLEVOLCANO);

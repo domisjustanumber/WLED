@@ -387,8 +387,10 @@ extern BusManager busses; // same as wled.h
 #define FX_MODE_PS1DSONICSTREAM        225
 #define FX_MODE_PS1DSONICBOOM          226
 #define FX_MODE_PS1DSPRINGY            227
+#define FX_MODE_VOCALPARTICLES         228 // Vocal Particles - voice-reactive particle bursts
+#define FX_MODE_VOCALECHO              229 // Vocal Echo - voice-reactive expanding particle rings
 
-#define MODE_COUNT                     228
+#define MODE_COUNT                     230
 
 typedef enum mapping1D2D {
   M12_Pixels = 0,
