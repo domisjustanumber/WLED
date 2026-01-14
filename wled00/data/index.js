@@ -321,9 +321,19 @@ function showToast(text, error = false)
 	if (error) console.log(text);
 }
 
-function showErrorToast()
+function showErrorToast(ereason=0)
 {
-	showToast('Connection to light failed!', true);
+	var etext = 'Connection to light failed!';
+	switch(ereason) {
+	case 1: etext = '(loadPalettes) ' + etext; break;
+	case 2: etext = '(loadFX) ' + etext; break;
+	case 3: etext = '(loadFXData) ' + etext; break;
+	case 4: etext = '(requestJson) ' + etext; break;
+	case 5: etext = '(requestJson urlfetch) ' + etext; break;
+	case 6: etext = '(getPalettesData) ' + etext; break;
+	default: break;
+	}
+	showToast(etext,true);
 }
 
 function clearErrorToast(n=5000)
@@ -487,7 +497,7 @@ function loadPalettes(callback = null)
 		method: 'get'
 	})
 	.then((res)=>{
-		if (!res.ok) showErrorToast();
+		if (!res.ok) showErrorToast(1);
 		return res.json();
 	})
 	.then((json)=>{
@@ -511,7 +521,7 @@ function loadFX(callback = null)
 		method: 'get'
 	})
 	.then((res)=>{
-		if (!res.ok) showErrorToast();
+		if (!res.ok) showErrorToast(2);
 		return res.json();
 	})
 	.then((json)=>{
@@ -535,7 +545,7 @@ function loadFXData(callback = null)
 		method: 'get'
 	})
 	.then((res)=>{
-		if (!res.ok) showErrorToast();
+		if (!res.ok) showErrorToast(3);
 		return res.json();
 	})
 	.then((json)=>{
@@ -666,7 +676,7 @@ function parseInfo(i) {
 function populateInfo(i)
 {
 	var cn="";
-	var heap = i.freeheap/1000;
+	//var heap = i.freeheap/1000;
 	var heap = Math.round(i.freeheap/100)/10;        // WLEDMM bugfix
 	var theap = (i.totalheap>0)?i.totalheap/1000:-1; //WLEDMM - total heap is not available on 8266
 	var flashsize = i.getflash/1000; //WLEDMM and Athom
@@ -725,6 +735,7 @@ ${i.tpsram?inforow("PSRAM " + (i.psrmode?"("+i.psrmode+" mode) ":"") + " ☾",(i
 ${i.e32flash?inforow("Flash mode "+i.e32flashmode+i.e32flashtext + " ☾",i.e32flash+" MB, "+i.e32flashspeed," Mhz"):""}
 ${i.e32model?inforow(i.e32model + " ☾",i.e32cores +" core(s),"," "+i.e32speed+" Mhz"):""}
 ${inforow("Environment",i.arch + " " + i.core + " (" + i.lwip + ")")}
+${i.repo?inforow("Github",i.repo):""}
 <tr><td colspan=2><hr style="height:1px;border-width:0;color:SeaGreen;background-color:SeaGreen"></td></tr>
 ${i.e32code?inforow("Last ESP Restart ☾",i.e32code+" "+i.e32text):""}
 ${i.e32core0code?inforow("Core0 rst reason ☾",i.e32core0code, " "+i.e32core0text):""}
@@ -1829,8 +1840,8 @@ function updateSelectedFx()
 		var selectedName = selectedEffect.querySelector(".lstIname").innerText;
 		var segs = gId("segcont").querySelectorAll(`div[data-map="map2D"]`);
 		for (const seg of segs) if (selectedName.indexOf("\u25A6")<0) seg.classList.remove('hide'); else seg.classList.add('hide');
-		var segs = gId("segcont").querySelectorAll(`div[data-snd="si"]`);
-		for (const seg of segs) if (selectedName.indexOf("\u266A")<0 && selectedName.indexOf("\u266B")<0) seg.classList.add('hide'); else seg.classList.remove('hide'); // also "♫ "?
+		var segs2 = gId("segcont").querySelectorAll(`div[data-snd="si"]`);
+		for (const seg2 of segs2) if (selectedName.indexOf("\u266A")<0 && selectedName.indexOf("\u266B")<0) seg2.classList.add('hide'); else seg2.classList.remove('hide'); // also "♫ "?
 	}
 }
 
@@ -2182,7 +2193,7 @@ function requestJson(command=null)
 {
 	gId('connind').style.backgroundColor = "var(--c-y)";
 	if (command && !reqsLegal) return; // stop post requests from chrome onchange event on page restore
-	if (!jsonTimeout) jsonTimeout = setTimeout(()=>{if (ws) ws.close(); ws=null; showErrorToast()}, 3000);
+	if (!jsonTimeout) jsonTimeout = setTimeout(()=>{if (ws) ws.close(); ws=null; showErrorToast(4)}, 3000);
 	var req = null;
 	var url = (loc?`http://${locip}`:'') + '/json/si';
 	var useWs = (ws && ws.readyState === WebSocket.OPEN);
@@ -2198,7 +2209,7 @@ function requestJson(command=null)
 		req = JSON.stringify(command);
 		if (req.length > 1340) useWs = false; // do not send very long requests over websocket
 		if (req.length >  500 && lastinfo && lastinfo.arch == "esp8266") useWs = false; // esp8266 can only handle 500 bytes
-	};
+	}
 
 	if (useWs) {
 		// console.log("requestJson ws.send", command); //WLEDMM Debug
@@ -2217,7 +2228,7 @@ function requestJson(command=null)
 	.then(res => {
 		clearTimeout(jsonTimeout);
 		jsonTimeout = null;
-		if (!res.ok) showErrorToast();
+		if (!res.ok) showErrorToast(5);
 		return res.json();
 	})
 	.then(json => {
@@ -2297,7 +2308,8 @@ function toggleLiveview()
 	if (isM) {
 		//WLEDMM adding liveview2D support on main ui
 		isLv = !isLv;
-		gId("colorGFX").style.display = isLv? "inline":"none"; //WLEDMM: set off if explicitly gfx pushed
+		//WLEDMM: set off if explicitly gfx pushed
+		gId("colorGFX").style.display = "inline"; // always keep colors visible
 		gId("effectGFX").style.display = isLv? "inline":"none";
 		gId("segGFX").style.display = isLv? "inline":"none";
 
@@ -3452,7 +3464,7 @@ function getPalettesData(page, callback)
 		}
 	})
 	.then(res => {
-		if (!res.ok) showErrorToast();
+		if (!res.ok) showErrorToast(6);
 		return res.json();
 	})
 	.then(json => {
@@ -3811,7 +3823,8 @@ function reportUpgradeEvent(oldVersion, newVersion) {
 				bootloaderSHA256: infoData.bootloaderSHA256 || '',   // Bootloader SHA256 hash - not yet availeable in WLEDMM
 				brand: infoData.brand,                           // Device brand (always present)
 				product: infoData.product,                       // Product name (always present)
-				flashSize: infoData.flash                        // Flash size (always present)
+				flashSize: infoData.flash,                       // Flash size (always present)
+				repo: infoData.repo                              // GitHub repository (always present)
 		};
 		// Add optional fields if available
 		if (infoData.tpsram !== undefined) upgradeData.psramSize = Math.round(infoData.tpsram / (1024 * 1024));  // convert bytes to MB - tpsram is MM specific

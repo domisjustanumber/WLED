@@ -253,6 +253,12 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
       // segment has RGB or White
       for (size_t i = 0; i < 3; i++)
       {
+        // JSON "col" array can contain the following values for each of segment's colors (primary, background, custom):
+        // "col":[int|string|object|array, int|string|object|array, int|string|object|array]
+        //   int = Kelvin temperature or 0 for black
+        //   string = hex representation of [WW]RRGGBB or "r" for random color
+        //   object = individual channel control {"r":0,"g":127,"b":255,"w":255}, each being optional (valid to send {})
+        //   array = direct channel values [r,g,b,w] (w element being optional)
         int rgbw[] = {0,0,0,0};
         bool colValid = false;
         JsonArray colX = colarr[i];
@@ -265,6 +271,9 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
             if (kelvin == 0) seg.setColor(i, 0);
             if (kelvin >  0) colorKtoRGB(kelvin, brgbw);
             colValid = true;
+            } else if (hexCol[0] == 'r' && hexCol[1] == '\0') { // Random colors via JSON API in Segment object like col=["r","r","r"] · Issue #4996
+              setRandomColor(brgbw);
+              colValid = true;
           } else { //HEX string, e.g. "FFAA00"
             colValid = colorFromHexString(brgbw, hexCol);
           }
@@ -327,7 +336,10 @@ bool deserializeSegment(JsonObject elem, byte it, byte presetId)
   // end fix
   if (getVal(elem["fx"], &fx, 0, last)) { //load effect ('r' random, '~' inc/dec, 0-255 exact value, 5~10r pick random between 5 & 10)
     if (!presetId && currentPlaylist>=0) unloadPlaylist();
-    if (fx != seg.mode) seg.setMode(fx, elem[F("fxdef")], elem[F("fxdef2")]); // WLEDMM fxdef2 added
+    bool doLoadDefault = elem[F("fxdef")] == true;
+    if (fx == FX_MODE_IMAGE) doLoadDefault = true;        // WLEDMM quick fix: when called from PixelForge, images were always shown with blur
+    if (fx == FX_MODE_2DSCROLLTEXT) doLoadDefault = true; //        same hack for scrolling text 
+    if (fx != seg.mode) seg.setMode(fx, doLoadDefault, elem[F("fxdef2")]); // WLEDMM fxdef2 added
   }
 
   //getVal also supports inc/decrementing and random

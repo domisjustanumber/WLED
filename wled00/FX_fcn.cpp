@@ -515,13 +515,11 @@ uint8_t IRAM_ATTR_YN Segment::currentBri(uint8_t briNew, bool useCct) const {
 }
 #endif
 
-uint8_t Segment::currentMode(uint8_t newMode) {
+inline uint8_t Segment::currentMode(uint8_t newMode) {
   return (progress()>32767U) ? newMode : (_t ? _t->_modeP : newMode); // change effect in the middle of transition
 }
 
-uint32_t Segment::currentColor(uint8_t slot, uint32_t colorNew) {
-  return transitional && _t ? color_blend(_t->_colorT[slot], colorNew, progress(), true) : colorNew;
-}
+// WLEDMM: Segment::currentColor() moved to FX.h for better optimization by the compiler
 
 void Segment::setCurrentPalette() {
   loadPalette(_currentPalette, palette);
@@ -1634,19 +1632,7 @@ void __attribute__((hot)) Segment::blur(uint8_t blur_amount, bool smear) {
  * The colours are a transition r -> g -> b -> back to r
  * Inspired by the Adafruit examples.
  */
-uint32_t Segment::color_wheel(uint8_t pos) {
-  if (palette) return color_from_palette(pos, false, true, 0);
-  pos = 255 - pos;
-  if(pos < 85) {
-    return ((uint32_t)(255 - pos * 3) << 16) | ((uint32_t)(0) << 8) | (pos * 3);
-  } else if(pos < 170) {
-    pos -= 85;
-    return ((uint32_t)(0) << 16) | ((uint32_t)(pos * 3) << 8) | (255 - pos * 3);
-  } else {
-    pos -= 170;
-    return ((uint32_t)(pos * 3) << 16) | ((uint32_t)(255 - pos * 3) << 8) | (0);
-  }
-}
+// WLEDMM: Segment::color_wheel(uint8_t pos) moved to FX.h for better optimization by the compiler
 
 /*
  * Returns a new, random wheel index with a minimum distance of 42 from pos.
@@ -1672,24 +1658,7 @@ uint8_t Segment::get_random_wheel_index(uint8_t pos) const { // WLEDMM use fast 
  * @param pbri Value to scale the brightness of the returned color by. Default is 255. (no scaling)
  * @returns Single color from palette
  */
-uint32_t __attribute__((hot)) Segment::color_from_palette(uint_fast16_t i, bool mapping, bool wrap, uint8_t mcol, uint8_t pbri) // WLEDMM use fast int types
-{
-  // default palette or no RGB support on segment
-  if ((palette == 0 && mcol < NUM_COLORS) || !_isRGB) {
-    uint32_t color = currentColor(mcol, colors[mcol]);
-    color = gamma32(color);
-    if (pbri == 255) return color;
-    return RGBW32(scale8_video(R(color),pbri), scale8_video(G(color),pbri), scale8_video(B(color),pbri), scale8_video(W(color),pbri));
-  }
-
-  uint8_t paletteIndex = i;
-  uint_fast16_t vLen = mapping ? virtualLength() : 1;
-  if (mapping && vLen > 1) paletteIndex = (i*255)/(vLen -1);
-  if (!wrap) paletteIndex = scale8(paletteIndex, 240); //cut off blend at palette "end"
-  CRGB fastled_col = ColorFromPalette(_currentPalette, paletteIndex, pbri, (strip.paletteBlend == 3)? NOBLEND:LINEARBLEND); // NOTE: paletteBlend should be global
-
-  return RGBW32(fastled_col.r, fastled_col.g, fastled_col.b, 0);
-}
+// WLEDMM: Segment::color_from_palette() moved to FX.h for better optimization by the compiler
 
  //WLEDMM netmindz ar palette
 uint8_t * Segment::getAudioPalette(int pal) const {
