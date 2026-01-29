@@ -395,7 +395,7 @@ CRGBPalette16 &Segment::loadPalette(CRGBPalette16 &targetPalette, uint8_t pal) c
         targetPalette[i].b = prevRandomPalette[i].b*(5000-timeSinceLastChange)/5000 + randomPalette[i].b*timeSinceLastChange/5000;
       }
       break;}
-    case 74: {//periodically replace palette with a random one. Transition palette change in 500ms
+    case 76: {//Random Cycle - periodically replace palette with a random one. Transition palette change in 500ms
       uint32_t timeSinceLastChange = millis() - _lastPaletteChange;
       if (timeSinceLastChange > randomPaletteChangeTime * 1000U) {
         prevRandomPalette = randomPalette;
@@ -2774,5 +2774,5 @@ const char JSON_palette_names[] PROGMEM = R"=====([
 "Magenta","Magred","Yelmag","Yelblu","Orange & Teal","Tiamat","April Night","Orangery","C9","Sakura",
 "Aurora","Atlantica","C9 2","C9 New","Temperature","Aurora 2","Retro Clown","Candy","Toxy Reaf","Fairy Reaf",
 "Semi Blue","Pink Candy","Red Reaf","Aqua Flash","Yelblu Hot","Lite Light","Red Flash","Blink Red","Red Shift","Red Tide",
-"Candy2","Audio Responsive Ratio ☾","Audio Responsive Hue ☾","Audio Responsive Ramp ☾","* Random Cycle"
+"Candy2","Audio Responsive Ratio ☾","Audio Responsive Hue ☾","Audio Responsive Ramp ☾","Vocal Stream","Vocal Stream Blend","* Random Cycle"
 ])=====";

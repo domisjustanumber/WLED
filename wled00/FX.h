@@ -397,8 +397,13 @@ static uint8_t strip_getPaletteBlend();  // forward declaration: little helper t
 #define FX_MODE_PS1DSPRINGY            227
 #define FX_MODE_VOCALPARTICLES         228 // Vocal Particles - voice-reactive particle bursts
 #define FX_MODE_VOCALECHO              229 // Vocal Echo - voice-reactive expanding particle rings
+#define FX_MODE_SINEBAR                230 // Sine Bar - Voice-reactive particle stream with frequency-based coloring
+#define FX_MODE_PS1DVOCALSTREAM        231 // PS Vocal Stream - Voice-reactive particles with frequency-based palette colors
+#define FX_MODE_PS1DVOCALSTREAM_LITE   232 // PS Vocal Stream Lite - 50% particle density
+#define FX_MODE_PS1DVOCALSTREAM_BASIC  233 // PS Vocal Stream Basic - No advanced particle properties
+#define FX_MODE_PS1DVOCALSTREAM_MIN    234 // PS Vocal Stream Minimal - 50% density + no advanced
 
-#define MODE_COUNT                     230
+#define MODE_COUNT                     235
 
 typedef enum mapping1D2D {
   M12_Pixels = 0,
@@ -632,7 +637,7 @@ typedef struct Segment {
     inline bool     isCCT(void)          const { return _isCCT; }
     inline uint16_t width(void)          const { return (stop  > start)  ?  (stop - start)  : 0; } // segment width in physical pixels (length if 1D)
     inline uint16_t height(void)         const { return (stopY > startY) ? (stopY - startY) : 0; } // segment height (if 2D) in physical pixels // WLEDMM make sure its always > 0
-    inline uint16_t length(void)         const { return width() * height(); }     // segment length (count) in physical pixels // WLEDMM fishy ... need to double-check if this is correct
+    inline uint16_t length(void)         const { return width(  ) * height(); }     // segment length (count) in physical pixels // WLEDMM fishy ... need to double-check if this is correct
     inline uint16_t groupLength(void)    const { return max(1, grouping + spacing); } // WLEDMM length = 0 could lead to div/0 in virtualWidth() and virtualHeight()
     inline uint8_t  getLightCapabilities(void) const { return _capabilities; }
 

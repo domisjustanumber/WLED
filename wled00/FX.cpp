@@ -4465,6 +4465,206 @@ static const char _data_FX_MODE_SINEWAVE[] PROGMEM = "Sine";
 
 
 /*
+ * Sine Bar - Voice-reactive particle stream effect
+ * Particles emit from one end and travel to the other end of the segment.
+ * Color is determined by voice frequency analysis - different sounds, voices,
+ * and singing notes produce visibly different colors.
+ * Perlin noise is blended in for color interest.
+ * 
+ * Speed: How fast particles travel (does not affect spawn rate)
+ * Intensity: Particle density (how many particles spawn per sound)
+ * Custom1: Fade rate (how quickly particles fade out)
+ * Custom2: Voice color sensitivity (how much frequency affects color)
+ */
+
+// Structure to track each particle
+typedef struct VoiceParticle {
+  uint16_t position;    // position in 1/256th pixels for smooth sub-pixel movement
+  uint8_t  colorIdx;    // base color index from palette (voice-determined)
+  uint8_t  brightness;  // current brightness (fades over time)
+  uint8_t  noiseSeed;   // unique seed for perlin noise variation
+} voiceparticle_t;
+
+#define SINEBAR_MAX_PARTICLES 512
+
+uint16_t mode_sinebar(void) {
+  const uint16_t dataSize = sizeof(voiceparticle_t) * SINEBAR_MAX_PARTICLES + 4;
+  if (!SEGENV.allocateData(dataSize)) return mode_oops();
+  
+  voiceparticle_t* particles = reinterpret_cast<voiceparticle_t*>(SEGENV.data);
+  uint16_t* numParticles = (uint16_t*)(SEGENV.data + sizeof(voiceparticle_t) * SINEBAR_MAX_PARTICLES);
+  uint8_t* lastColorIdx = (uint8_t*)(numParticles + 1);  // remember last color for continuity
+  
+  // Initialize on first call
+  if (SEGENV.call == 0) {
+    *numParticles = 0;
+    *lastColorIdx = 128;  // start at middle of palette
+    for (int i = 0; i < SINEBAR_MAX_PARTICLES; i++) {
+      particles[i].position = 0;
+      particles[i].brightness = 0;
+    }
+  }
+  
+  // Get audio data including FFT for voice analysis
+  um_data_t *um_data = getAudioData();
+  float volumeSmth = *(float*)um_data->u_data[0];
+  float FFT_MajorPeak = *(float*)um_data->u_data[4];  // dominant frequency
+  uint8_t* fftResult = (uint8_t*)um_data->u_data[2];  // frequency bins
+  
+  // Fill background with black (particles will be drawn on top)
+  SEGMENT.fill(BLACK);
+  
+  // Calculate particle speed (in 1/256th pixels per frame)
+  // Speed slider: 0 = slow (8), 255 = very fast (520) - covers segment quickly
+  uint16_t particleSpeed = 8 + (SEGMENT.speed << 1);  // 8-518 subpixels per frame
+  
+  // Fade rate from custom1: 0 = no fade (reaches end), 255 = fades in a few ms
+  // At 60fps, to fade in ~50ms (3 frames) at max, need fadeRate of ~85
+  uint8_t fadeRate = (SEGMENT.custom1 == 0) ? 0 : 1 + (SEGMENT.custom1 >> 2);  // 0, or 1-64 per frame
+  
+  // Density from intensity: how many particles per frame when sound detected
+  // 0 = few particles, 255 = massive stream (up to 48 per frame)
+  uint8_t density = 1 + (SEGMENT.intensity >> 2);  // 1-64 particles per frame max
+  
+  // Voice color sensitivity from custom2
+  uint8_t voiceSensitivity = 128 + (SEGMENT.custom2 >> 1);  // 128-255 range
+  
+  // Analyze voice frequency to determine color
+  uint8_t voiceColorBase = *lastColorIdx;  // default to last known color
+  bool soundDetected = volumeSmth > 0.1f;  // very low threshold - emit particles for any detected sound
+  
+  if (soundDetected) {
+    // Analyze voice frequency for color
+    if (FFT_MajorPeak > 50.0f) {
+      // Map frequency logarithmically to palette
+      float freqLog = logf(max(50.0f, FFT_MajorPeak));
+      
+      // Map voice frequency range (80Hz-3kHz) to full palette (0-255)
+      voiceColorBase = (uint8_t)constrain(mapf(freqLog, 4.0f, 8.5f, 0.0f, 255.0f), 0, 255);
+      
+      // Apply sensitivity scaling
+      int colorSpread = ((int)voiceColorBase - 128) * voiceSensitivity / 128;
+      voiceColorBase = (uint8_t)constrain(128 + colorSpread, 0, 255);
+      
+      // Analyze FFT bins for voice characteristics
+      if (fftResult != nullptr) {
+        int lowSum = fftResult[1] + fftResult[2] + fftResult[3];
+        int midSum = fftResult[4] + fftResult[5] + fftResult[6] + fftResult[7];
+        int highSum = fftResult[8] + fftResult[9] + fftResult[10];
+        
+        if (midSum > lowSum && midSum > highSum) {
+          voiceColorBase = (voiceColorBase + 128) / 2;
+        } else if (highSum > midSum) {
+          voiceColorBase = (voiceColorBase + 200) / 2;
+        } else if (lowSum > midSum) {
+          voiceColorBase = (voiceColorBase + 56) / 2;
+        }
+      }
+      
+      *lastColorIdx = voiceColorBase;
+    }
+    
+    // CONTINUOUSLY spawn particles while ANY sound is detected
+    // Base spawn rate ensures visible stream, volume adds more particles
+    uint8_t baseSpawn = 2 + (density >> 4);  // Always spawn 2-6 particles minimum
+    
+    // Volume adds extra particles - louder = denser stream
+    float volumeBoost = min(1.0f, volumeSmth / 16.0f);  // 0.0 to 1.0
+    uint8_t extraSpawn = (uint8_t)(density * volumeBoost * 0.5f);  // Up to density/2 extra
+    
+    uint8_t toSpawn = baseSpawn + extraSpawn;
+    toSpawn = min(toSpawn, (uint8_t)64);  // Cap per frame
+    
+    // Spawn particles every single frame while sound is present
+    for (uint8_t s = 0; s < toSpawn && *numParticles < SINEBAR_MAX_PARTICLES; s++) {
+      int idx = *numParticles;
+      particles[idx].position = 0;  // start at beginning
+      particles[idx].brightness = 255;
+      
+      // Voice-determined color with slight variation per particle
+      int8_t colorVar = (int8_t)((strip.now + s * 37) % 32) - 16;
+      particles[idx].colorIdx = (uint8_t)constrain((int)voiceColorBase + colorVar, 0, 255);
+      
+      // Unique noise seed for this particle
+      particles[idx].noiseSeed = (uint8_t)(strip.now + s * 73);
+      
+      (*numParticles)++;
+    }
+  }
+  
+  // Update and draw all particles
+  int writeIdx = 0;
+  for (int i = 0; i < *numParticles; i++) {
+    // Move particle forward
+    particles[i].position += particleSpeed;
+    
+    // Calculate pixel position (position is in 1/256th pixels)
+    uint16_t pixelPos = particles[i].position >> 8;
+    uint8_t subPixel = particles[i].position & 0xFF;
+    
+    // Apply fade
+    if (particles[i].brightness > fadeRate) {
+      particles[i].brightness -= fadeRate;
+    } else {
+      particles[i].brightness = 0;
+    }
+    
+    // Remove particle if it's off the segment or fully faded
+    if (pixelPos >= SEGLEN || particles[i].brightness == 0) {
+      continue;  // Don't copy this particle
+    }
+    
+    // Calculate final color with Perlin noise blending
+    uint8_t baseColor = particles[i].colorIdx;
+    
+    // Blend in Perlin noise for color interest
+    uint8_t noiseVal = perlin8(
+      pixelPos * 32 + particles[i].noiseSeed,
+      (strip.now >> 3) + particles[i].noiseSeed,
+      particles[i].noiseSeed * 17
+    );
+    
+    // Blend noise into color (±32 variation)
+    int noiseOffset = ((int)noiseVal - 128) >> 2;
+    uint8_t finalColorIdx = (uint8_t)constrain((int)baseColor + noiseOffset, 0, 255);
+    
+    // Get color from palette at full brightness
+    uint32_t color = SEGMENT.color_from_palette(finalColorIdx, false, PALETTE_MOVING_WRAP, 0);
+    
+    // Apply particle brightness
+    uint8_t bri = particles[i].brightness;
+    
+    // Draw the particle - use setPixelColor for main pixel, blend for anti-aliasing
+    if (pixelPos < SEGLEN) {
+      // Calculate anti-aliased brightness for smooth movement
+      uint8_t mainBri = scale8(bri, 255 - subPixel);
+      uint32_t mainColor = color_fade(color, mainBri);
+      
+      // Use blendPixelColor to allow particles to overlap nicely
+      SEGMENT.blendPixelColor(pixelPos, mainColor, 128);
+      
+      // Anti-aliased leading edge
+      if (pixelPos + 1 < SEGLEN && subPixel > 32) {
+        uint8_t trailBri = scale8(bri, subPixel);
+        uint32_t trailColor = color_fade(color, trailBri);
+        SEGMENT.blendPixelColor(pixelPos + 1, trailColor, 128);
+      }
+    }
+    
+    // Keep this particle
+    if (writeIdx != i) {
+      particles[writeIdx] = particles[i];
+    }
+    writeIdx++;
+  }
+  *numParticles = writeIdx;
+  
+  return FRAMETIME;
+}
+static const char _data_FX_MODE_SINEBAR[] PROGMEM = "Sine Bar@!,Density,Fade,Voice Color;!,!;!;1v;ix=160,c1=64,c2=160";
+
+
+/*
  * Best of both worlds from Palette and Spot effects. By Aircoookie
  */
 uint16_t mode_flow(void)
@@ -8232,7 +8432,7 @@ uint16_t mode_gravfreq(void) {                  // Gravfreq. By Andrew Tuline.
   SEGENV.aux0 = indexNew;
   return FRAMETIME;
 } // mode_gravfreq()
-static const char _data_FX_MODE_GRAVFREQ[] PROGMEM = "Gravfreq ☾@Rate of fall,Sensitivity;!,!;!;1f;ix=128,m12=0,si=0"; // Pixels, Beatsin
+static const char _data_FX_MODE_GRAVFREQ[] PROGMEM = "Gravfreq ☾@Rate of fall,Sensitivity;!,!;!;1f;ix=128,m12=0,si=0,pal=0"; // Pixels, Beatsin
 
 
 //////////////////////
@@ -9462,66 +9662,63 @@ uint16_t mode_VocalParticles(void) {
 
   return FRAMETIME;
 } // mode_VocalParticles()
-static const char _data_FX_MODE_VOCALPARTICLES[] PROGMEM = "Vocal Particles ☾@Speed,Intensity,Fade,Shimmer,Blur;;!;12f;ix=192,c1=32,c2=64,c3=16,si=0";
+static const char _data_FX_MODE_VOCALPARTICLES[] PROGMEM = "Vocal Particles ☾@Speed,Intensity,Fade,Shimmer,Blur;;!;12f;ix=192,c1=32,c2=64,c3=16,si=0,pal=0";
 
 /////////////////////////
-//   2D Vocal Echo     //
-/////////////////////////
+///////////////////////
+//   Vocal Echo      //
+///////////////////////
 /*
  * Vocal Echo
  * 
- * A voice-reactive effect that creates expanding rings of randomly scattered particles
- * when sounds in the human voice frequency range are detected. Each voice detection
- * triggers a new ring that expands outward with particles randomly distributed along it.
+ * Based on Gravcenter by Andrew Tuline, modified for voice-reactive visuals.
+ * Bars expand from center based on voice volume. Colors change based on 
+ * voice frequencies - different sounds produce different colors!
+ * 
+ * When sound stops, the bars slide all the way to the ENDS of the strip
+ * at the same speed as the rise, then reset.
  * 
  * Audio Analysis:
  *   - Monitors FFT bins 4-9 (approximately 301-1895 Hz) which correspond to human voice
- *   - Each voice trigger spawns a new expanding ring
- *   - Ring brightness and particle density scale with voice energy
- * 
- * Visual Design:
- *   - 2D: Expanding circular rings with particles scattered around the circumference
- *   - 1D: Expanding bands with particles scattered within them
- *   - Particles shimmer and twinkle as rings expand
- *   - Multiple rings can overlap creating layered echo effects
+ *   - Low frequencies (deep sounds, "o"/"u" vowels): warm colors (reds/oranges)
+ *   - Mid frequencies ("a"/"e" vowels): green/cyan colors
+ *   - High frequencies ("i", consonants, "s"/"t"): cool colors (blues/purples)
+ *   - Perlin noise adds organic variation while frequency sets the base color
  * 
  * Parameters:
- *   - Speed: Ring expansion speed and trigger sensitivity
- *   - Intensity: Particle brightness and ring density
- *   - Custom1 (Fade): Ring fade rate - lower = longer lasting rings
- *   - Custom2 (Density): Particle density on each ring
- *   - Custom3 (Blur): Optional blur for softer appearance
+ *   - Speed: Movement speed (same for rise and fall)
+ *   - Intensity: Sensitivity to sound
  * 
- * Works for both 1D LED strips and 2D LED matrices.
- * 
- * Author: @domisjustanumber
+ * Author: @domisjustanumber (based on Gravcenter by Andrew Tuline)
  * @license GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
  */
 uint16_t mode_VocalEcho(void) {
-  const bool is2D = strip.isMatrix;
-  
-  // Dimensions based on 1D or 2D setup
-  const uint16_t cols = is2D ? SEGMENT.virtualWidth() : SEGMENT.virtualLength();
-  const uint16_t rows = is2D ? SEGMENT.virtualHeight() : 1;
-  const float centerX = cols / 2.0f;
-  const float centerY = rows / 2.0f;
-  const uint16_t maxDist = is2D ? sqrt16((cols/2)*(cols/2) + (rows/2)*(rows/2)) + 10 : (cols / 2) + 5;
-
-  // Ring structure - each ring expands outward
+  // State structure for the effect
   typedef struct {
-    float radius;         // Current radius of the ring
-    uint16_t brightness;  // 16-bit for smooth fading
-    uint8_t colorIndex;   // Base color for this ring
-    uint8_t particleSeed; // Random seed for particle positions on this ring
-    uint8_t active;       // 0 = inactive, 1 = active
-  } Ring;
-  
-  const uint8_t MAX_RINGS = 8; // Maximum number of simultaneous rings
-  const size_t dataSize = sizeof(Ring) * MAX_RINGS + sizeof(uint32_t); // rings + lastTriggerTime
+    float innerEdge;         // Inner edge of lit area (starts at 0, grows when fading)
+    float outerEdge;         // Outer edge of lit area (grows with sound)
+    float smoothedLow;       // Smoothed low frequency
+    float smoothedMid;       // Smoothed mid frequency  
+    float smoothedHigh;      // Smoothed high frequency
+    float smoothedColor;     // Smoothed color value
+  } VocalEchoState;
+
+  constexpr uint16_t dataSize = sizeof(VocalEchoState);
   if (!SEGENV.allocateData(dataSize)) return mode_oops();
+  VocalEchoState* state = reinterpret_cast<VocalEchoState*>(SEGENV.data);
   
-  Ring *rings = reinterpret_cast<Ring*>(SEGENV.data);
-  uint32_t *lastTriggerTime = reinterpret_cast<uint32_t*>(SEGENV.data + sizeof(Ring) * MAX_RINGS);
+  const uint16_t halfLen = SEGLEN / 2;
+  
+  if (SEGENV.call == 0) {
+    SEGMENT.setUpLeds();
+    SEGMENT.fill(BLACK);
+    state->innerEdge = 0;
+    state->outerEdge = 0;
+    state->smoothedLow = 0;
+    state->smoothedMid = 0;
+    state->smoothedHigh = 0;
+    state->smoothedColor = 85.0f;
+  }
 
   // Get audio data
   um_data_t *um_data = getAudioData();
@@ -9529,245 +9726,131 @@ uint16_t mode_VocalEcho(void) {
   uint8_t fftResult[NUM_GEQ_CHANNELS] = {0};
   if (um_data->u_data != nullptr) memcpy(fftResult, um_data->u_data[2], sizeof(fftResult));
 
-  if (SEGENV.call == 0) {
-    SEGMENT.setUpLeds();
-    SEGMENT.fill(BLACK);
-    // Initialize rings
-    for (int i = 0; i < MAX_RINGS; i++) {
-      rings[i].active = 0;
-      rings[i].brightness = 0;
-      rings[i].radius = 0;
-    }
-    *lastTriggerTime = 0;
-  }
+  // Fade out existing pixels (creates smooth trails)
+  SEGMENT.fade_out(250);
 
-  // Calculate voice frequency energy (bins 4-9: 301-1895 Hz)
-  uint16_t voiceEnergy = 0;
-  for (int i = 4; i <= 9; i++) {
-    voiceEnergy += fftResult[i];
-  }
-  voiceEnergy = voiceEnergy / 6; // Average of voice bins
+  // Calculate sample average like gravcenter
+  float segmentSampleAvg = volumeSmth * (float)SEGMENT.intensity / 255.0f;
+  segmentSampleAvg *= 0.125f; // divide by 8, to compensate for later "sensitivity" upscaling
   
-  // Combine with overall volume for voice detection
-  float audioResponse = (voiceEnergy * 0.7f) + (volumeSmth * 30.0f * 0.3f);
-  audioResponse = constrain(audioResponse, 0.0f, 255.0f);
+  // Map to pixels available (half segment length since we mirror from center)
+  float mySampleAvg = mapf(segmentSampleAvg * 2.0f, 0, 32, 0, (float)halfLen);
+  uint16_t targetLevel = constrain((int)mySampleAvg, 0, halfLen);
   
-  // Voice detection threshold and trigger cooldown
-  const float VOICE_THRESHOLD = 30.0f;
-  bool voiceDetected = (audioResponse > VOICE_THRESHOLD) && (volumeSmth > 1.0f);
+  // Expansion/contraction speed - same for both rise and fall
+  // Speed parameter controls how fast (higher = faster)
+  float moveSpeed = 0.5f + (SEGMENT.speed / 64.0f); // 0.5 to ~4.5 pixels per frame
   
-  // Minimum time between ring spawns (controlled by speed)
-  uint32_t triggerInterval = 100 + ((255 - SEGMENT.speed) * 3); // 100-865ms
-  uint32_t timeSinceLastTrigger = strip.now - *lastTriggerTime;
+  // Determine if sound is active
+  bool soundActive = (targetLevel > 2) || (volumeSmth > 1.0f);
   
-  // Spawn new ring when voice is detected
-  if (voiceDetected && (timeSinceLastTrigger > triggerInterval)) {
-    // Find an inactive ring slot
-    int slot = -1;
-    for (int i = 0; i < MAX_RINGS; i++) {
-      if (!rings[i].active) {
-        slot = i;
-        break;
-      }
-    }
+  if (soundActive) {
+    // Sound is playing - expand outer edge, keep inner edge at center
+    state->innerEdge = 0; // Reset inner edge to center
     
-    // If no empty slot, replace the oldest (largest radius) ring
-    if (slot < 0) {
-      float maxRadius = 0;
-      for (int i = 0; i < MAX_RINGS; i++) {
-        if (rings[i].radius > maxRadius) {
-          maxRadius = rings[i].radius;
-          slot = i;
-        }
-      }
-    }
-    
-    if (slot >= 0) {
-      rings[slot].radius = 0;
-      rings[slot].brightness = 65535; // Full brightness
-      rings[slot].colorIndex = (voiceEnergy * 2) + (uint8_t)(volumeSmth * 3);
-      rings[slot].particleSeed = random8(); // Unique seed for particle distribution
-      rings[slot].active = 1;
-      *lastTriggerTime = strip.now;
-    }
-  }
-
-  // Fade the display (creates trails/glow)
-  uint8_t fadeAmount = 48 + (SEGMENT.custom1 >> 1); // 48-175
-  SEGMENT.fadeToBlackBy(fadeAmount);
-  
-  // Particle density on rings (controlled by custom2)
-  uint8_t particleDensity = 8 + (SEGMENT.custom2 >> 2); // 8-71 particles per ring
-  
-  // Ring expansion speed
-  float expansionSpeed = 0.3f + (SEGMENT.speed / 200.0f); // 0.3 to 1.6 pixels per frame
-  
-  // Update and render all active rings
-  for (int r = 0; r < MAX_RINGS; r++) {
-    if (!rings[r].active) continue;
-    
-    // Expand ring
-    rings[r].radius += expansionSpeed;
-    
-    // Fade ring brightness
-    uint16_t fadeRate = 128 + (SEGMENT.custom1 << 1); // 128-638 per frame
-    if (rings[r].brightness > fadeRate) {
-      rings[r].brightness -= fadeRate;
+    // Outer edge follows sound level (smoothed expansion)
+    if (targetLevel > state->outerEdge) {
+      // Expand at moveSpeed rate
+      state->outerEdge += moveSpeed;
+      if (state->outerEdge > targetLevel) state->outerEdge = targetLevel;
     } else {
-      rings[r].brightness = 0;
-      rings[r].active = 0;
-      continue;
+      // Slight decay even when sound is on but quieter
+      state->outerEdge = state->outerEdge * 0.95f + targetLevel * 0.05f;
+    }
+  } else {
+    // Sound stopped - slide the band toward the ends of the segment
+    // Outer edge extends to the very end
+    if (state->outerEdge < halfLen) {
+      state->outerEdge += moveSpeed;
+      if (state->outerEdge > halfLen) state->outerEdge = halfLen;
     }
     
-    // Deactivate if ring is too large
-    if (rings[r].radius > maxDist) {
-      rings[r].active = 0;
-      continue;
-    }
-    
-    // Calculate base brightness for this ring
-    uint8_t ringBrightness = rings[r].brightness >> 8;
-    if (ringBrightness == 0 && rings[r].brightness > 0) ringBrightness = 1;
-    
-    // Ring width (gets wider as it expands for a softer look)
-    float ringWidth = 1.5f + (rings[r].radius / 15.0f);
-    if (ringWidth > 4.0f) ringWidth = 4.0f;
-    
-    if (is2D) {
-      // 2D: Render particles scattered around the ring circumference
-      // Use the ring's seed for consistent particle positions as ring expands
-      uint8_t seed = rings[r].particleSeed;
-      
-      for (int p = 0; p < particleDensity; p++) {
-        // Generate pseudo-random angle for this particle using seed
-        // This keeps particles in same relative positions as ring expands
-        uint8_t angleOffset = (seed * 37 + p * 67) & 0xFF; // 0-255
-        float angle = (angleOffset / 255.0f) * 2.0f * PI;
-        
-        // Calculate particle position on ring with slight random offset
-        uint8_t radiusJitter = ((seed * 13 + p * 41) & 0x1F); // 0-31
-        float particleRadius = rings[r].radius + (radiusJitter / 16.0f) - 1.0f;
-        
-        float px = centerX + cos(angle) * particleRadius;
-        float py = centerY + sin(angle) * particleRadius;
-        
-        // Skip if outside bounds
-        if (px < 0 || px >= cols || py < 0 || py >= rows) continue;
-        
-        // Calculate brightness with shimmer
-        uint8_t pixelBrightness = ringBrightness;
-        
-        // Add shimmer based on particle and time
-        uint16_t shimmerNoise = inoise16((uint16_t)(angle * 1000), strip.now * 30, p * 500);
-        uint8_t shimmer = shimmerNoise >> 8;
-        int16_t shimmerDelta = ((int16_t)shimmer - 128) / 3;
-        
-        // Random twinkle for some particles
-        if (shimmer > 230) {
-          shimmerDelta += 40;
-        }
-        
-        int16_t newBrightness = (int16_t)pixelBrightness + shimmerDelta;
-        pixelBrightness = constrain(newBrightness, 0, 255);
-        
-        // Apply intensity
-        pixelBrightness = scale8(pixelBrightness, SEGMENT.intensity);
-        
-        // Color varies slightly per particle
-        uint8_t colorIndex = rings[r].colorIndex + (angleOffset >> 3);
-        CRGB color = ColorFromPalette(SEGPALETTE, colorIndex, pixelBrightness, LINEARBLEND);
-        
-        // Sub-pixel rendering for smoothness
-        int16_t ix = (int16_t)px;
-        int16_t iy = (int16_t)py;
-        uint8_t fracX = (uint8_t)((px - ix) * 255);
-        uint8_t fracY = (uint8_t)((py - iy) * 255);
-        
-        if (ix >= 0 && ix < cols && iy >= 0 && iy < rows) {
-          CRGB c = color;
-          c.nscale8(scale8(255 - fracX, 255 - fracY));
-          SEGMENT.addPixelColorXY(ix, iy, c);
-        }
-        if (ix + 1 < cols && iy >= 0 && iy < rows) {
-          CRGB c = color;
-          c.nscale8(scale8(fracX, 255 - fracY));
-          SEGMENT.addPixelColorXY(ix + 1, iy, c);
-        }
-        if (ix >= 0 && ix < cols && iy + 1 < rows) {
-          CRGB c = color;
-          c.nscale8(scale8(255 - fracX, fracY));
-          SEGMENT.addPixelColorXY(ix, iy + 1, c);
-        }
-        if (ix + 1 < cols && iy + 1 < rows) {
-          CRGB c = color;
-          c.nscale8(scale8(fracX, fracY));
-          SEGMENT.addPixelColorXY(ix + 1, iy + 1, c);
-        }
-      }
-    } else {
-      // 1D: Render particles scattered within the ring band (both directions from center)
-      uint8_t seed = rings[r].particleSeed;
-      
-      // Ring spans from (center - radius - width) to (center - radius) and (center + radius) to (center + radius + width)
-      float innerRadius = rings[r].radius;
-      float outerRadius = rings[r].radius + ringWidth;
-      
-      for (int p = 0; p < particleDensity; p++) {
-        // Pseudo-random position within ring band
-        uint8_t posOffset = (seed * 37 + p * 67) & 0xFF;
-        float relPos = (posOffset / 255.0f) * ringWidth;
-        float dist = innerRadius + relPos;
-        
-        // Decide left or right side based on another pseudo-random value
-        bool rightSide = ((seed * 13 + p * 41) & 0x01);
-        
-        float px = rightSide ? (centerX + dist) : (centerX - dist);
-        
-        // Skip if outside bounds
-        if (px < 0 || px >= cols) continue;
-        
-        // Calculate brightness with shimmer
-        uint8_t pixelBrightness = ringBrightness;
-        uint16_t shimmerNoise = inoise16(p * 1000, strip.now * 40, seed * 100);
-        uint8_t shimmer = shimmerNoise >> 8;
-        int16_t shimmerDelta = ((int16_t)shimmer - 128) / 3;
-        
-        if (shimmer > 230) shimmerDelta += 40;
-        
-        int16_t newBrightness = (int16_t)pixelBrightness + shimmerDelta;
-        pixelBrightness = constrain(newBrightness, 0, 255);
-        pixelBrightness = scale8(pixelBrightness, SEGMENT.intensity);
-        
-        // Color
-        uint8_t colorIndex = rings[r].colorIndex + (posOffset >> 3);
-        CRGB color = ColorFromPalette(SEGPALETTE, colorIndex, pixelBrightness, LINEARBLEND);
-        
-        // Sub-pixel rendering
-        int16_t ix = (int16_t)px;
-        uint8_t fracX = (uint8_t)((px - ix) * 255);
-        
-        if (ix >= 0 && ix < cols) {
-          CRGB c = color;
-          c.nscale8(255 - fracX);
-          SEGMENT.addPixelColor(ix, c);
-        }
-        if (ix + 1 >= 0 && ix + 1 < cols) {
-          CRGB c = color;
-          c.nscale8(fracX);
-          SEGMENT.addPixelColor(ix + 1, c);
-        }
-      }
+    // Inner edge follows at the same speed (same as rise speed)
+    if (state->innerEdge < halfLen) {
+      state->innerEdge += moveSpeed;
+      if (state->innerEdge > halfLen) state->innerEdge = halfLen;
     }
   }
-
-  // Optional blur for softer appearance
-  if (SEGMENT.custom3 > 0) {
-    SEGMENT.blur(SEGMENT.custom3);
+  
+  // Clamp values
+  if (state->innerEdge < 0) state->innerEdge = 0;
+  if (state->outerEdge < 0) state->outerEdge = 0;
+  if (state->innerEdge > halfLen) state->innerEdge = halfLen;
+  if (state->outerEdge > halfLen) state->outerEdge = halfLen;
+  
+  // Reset when fully faded
+  if (state->innerEdge >= halfLen && state->outerEdge >= halfLen) {
+    state->innerEdge = 0;
+    state->outerEdge = 0;
+  }
+  
+  uint16_t innerPixel = (uint16_t)state->innerEdge;
+  uint16_t outerPixel = (uint16_t)state->outerEdge;
+  
+  // Analyze frequency distribution for color
+  // Voice frequencies: bins 4-9 (~301-1895 Hz)
+  float lowFreq = (float)(fftResult[4] + fftResult[5]);   // ~301-602 Hz - "o", "u"
+  float midFreq = (float)(fftResult[6] + fftResult[7]);   // ~602-1205 Hz - "a", "e"
+  float highFreq = (float)(fftResult[8] + fftResult[9]);  // ~1205-1895 Hz - "i", "s", "t"
+  
+  // Smooth the frequency bands
+  const float freqSmooth = 0.75f;
+  state->smoothedLow = state->smoothedLow * freqSmooth + lowFreq * (1.0f - freqSmooth);
+  state->smoothedMid = state->smoothedMid * freqSmooth + midFreq * (1.0f - freqSmooth);
+  state->smoothedHigh = state->smoothedHigh * freqSmooth + highFreq * (1.0f - freqSmooth);
+  
+  float totalFreq = state->smoothedLow + state->smoothedMid + state->smoothedHigh;
+  
+  // Calculate frequency-based color (0-255 palette index)
+  // Low = warm colors (0-40), Mid = green/cyan (85), High = blue/purple (160-220)
+  float targetColor = 85.0f; // Default to mid
+  if (totalFreq > 5.0f) {
+    // Weighted average based on frequency distribution
+    targetColor = (state->smoothedLow * 20.0f + state->smoothedMid * 85.0f + state->smoothedHigh * 170.0f) / totalFreq;
+    
+    // Emphasize dominant frequencies more
+    float highRatio = state->smoothedHigh / (totalFreq + 1.0f);
+    float lowRatio = state->smoothedLow / (totalFreq + 1.0f);
+    
+    if (highRatio > 0.45f) {
+      targetColor = 150.0f + (highRatio * 80.0f); // Blues/purples for "s", "t", "i"
+    } else if (lowRatio > 0.45f) {
+      targetColor = 30.0f - (lowRatio * 30.0f); // Reds/oranges for "o", "u"
+    }
+  }
+  
+  // Smooth color transitions
+  const float colorSmooth = 0.85f;
+  state->smoothedColor = state->smoothedColor * colorSmooth + targetColor * (1.0f - colorSmooth);
+  uint8_t baseColorIndex = (uint8_t)constrain(state->smoothedColor, 0.0f, 255.0f);
+  
+  // Brightness multiplier based on volume
+  uint8_t brightnessMult = constrain((int)(segmentSampleAvg * 16), 64, 255);
+  
+  // Draw the bars - only between inner and outer edges
+  for (int i = innerPixel; i < outerPixel; i++) {
+    // Perlin noise for organic color variation - influenced by frequency color
+    // The baseColorIndex from frequency analysis shifts the noise range
+    uint8_t noiseVal = inoise8(i * 50 + strip.now / 10, strip.now / 20 + i * 30);
+    
+    // Mix frequency color with perlin noise
+    // Frequency provides the base hue region, noise adds variation within that region
+    uint8_t colorIndex = baseColorIndex + (noiseVal / 4) - 32; // ±32 variation from base
+    
+    // Get color from palette with brightness
+    uint32_t color = SEGMENT.color_from_palette(colorIndex, false, PALETTE_SOLID_WRAP, 0);
+    
+    // Blend with secondary color based on brightness
+    color = color_blend(SEGCOLOR(1), color, brightnessMult);
+    
+    // Set pixels mirrored from center
+    SEGMENT.setPixelColor(i + halfLen, color);
+    SEGMENT.setPixelColor(halfLen - i - 1, color);
   }
 
   return FRAMETIME;
 } // mode_VocalEcho()
-static const char _data_FX_MODE_VOCALECHO[] PROGMEM = "Vocal Echo ☾@Speed,Intensity,Fade,Density,Blur;;!;12f;ix=192,c1=24,c2=128,c3=8,si=0";
+static const char _data_FX_MODE_VOCALECHO[] PROGMEM = "Vocal Echo ☾@Speed,Sensitivity;!,!;!;1v;ix=128,m12=2,si=0";
 
 #ifndef WLED_DISABLE_PARTICLESYSTEM2D
 /*
@@ -12352,6 +12435,176 @@ uint16_t mode_particle1DsonicBoom(void) {
 }
 static const char _data_FX_MODE_PS_SONICBOOM[] PROGMEM = "PS Sonic Boom@!,!,Color,Position,Bin,Mod,Filter,Blur;,!;!;1f;c2=63,c3=0,o2=1";
 
+// Core function for PS Vocal Stream variants - shared logic with configurable init parameters
+// Responds to all sounds using volumeSmth (like Gravcenter), with vocal frequencies influencing color
+static uint16_t mode_particle1DvocalStream_core(uint8_t particleFraction, bool useAdvanced) {
+  ParticleSystem1D *PartSys = nullptr;
+
+  if (SEGMENT.call == 0) { // initialization
+    if (!initParticleSystem1D(PartSys, 1, particleFraction, 0, useAdvanced))
+      return mode_oops(); // allocation failed or is single pixel
+    PartSys->setKillOutOfBounds(true);
+    PartSys->sources[0].source.x = 0;
+    PartSys->sources[0].var = 0;
+  }
+  else
+    PartSys = reinterpret_cast<ParticleSystem1D *>(SEGENV.data);
+  if (PartSys == nullptr)
+    return mode_oops();
+
+  // Particle System settings
+  PartSys->updateSystem();
+  PartSys->setMotionBlur(SEGMENT.custom3 >> 1); // blur range 0-15 (custom3 is 0-31)
+  PartSys->setSmearBlur(200);
+  PartSys->sources[0].v = 5 + (SEGMENT.speed >> 2);
+
+  // Audio processing - use volumeSmth like Gravcenter (proven to work with real microphone)
+  um_data_t *um_data = getAudioData();
+  float volumeSmth = *(float*)um_data->u_data[0];         // smooth overall volume
+  uint8_t *fftResult = (uint8_t *)um_data->u_data[2];     // FFT bins for vocal color
+
+  // Scale volume by intensity (sensitivity) - same approach as Gravcenter
+  float scaledVolume = volumeSmth * (float)SEGMENT.intensity / 255.0f;
+  scaledVolume *= 0.125f; // divide by 8, same scaling as Gravcenter
+  
+  // Convert to integer for particle calculations (0-255 range after scaling)
+  uint32_t loudness = (uint32_t)constrain(scaledVolume * 8.0f, 0.0f, 255.0f);
+
+  // Voice frequency analysis for COLOR (bins 2-7: ~86-861Hz covers voice fundamentals)
+  const uint32_t VOICE_BIN_LOW = 2;
+  const uint32_t VOICE_BIN_HIGH = 7;
+  
+  uint32_t maxEnergy = 0;
+  uint32_t dominantBin = 4; // default to middle of voice range
+  uint32_t voiceEnergy = 0;
+  
+  for (uint32_t i = VOICE_BIN_LOW; i <= VOICE_BIN_HIGH; i++) {
+    voiceEnergy += fftResult[i];
+    if (fftResult[i] > maxEnergy) {
+      maxEnergy = fftResult[i];
+      dominantBin = i;
+    }
+  }
+
+  // Color calculation: vocal frequencies directly control color when Color slider is low
+  // When Color slider > 128, base hue cycles over time for more variety
+  uint32_t hueIncrement = (SEGMENT.custom1 > 128) ? ((SEGMENT.custom1 - 128) >> 2) : 0; // only cycle when slider > 128
+  
+  // Calculate vocal influence on color (maps dominant voice bin to full palette range)
+  // This is the PRIMARY color control - voice frequency determines color position in palette
+  uint8_t vocalColorOffset = 0;
+  if (voiceEnergy > 20) { // only apply vocal coloring if there's meaningful voice energy
+    // Map voice bins to wider palette range for more distinct colors per frequency
+    vocalColorOffset = map(dominantBin, VOICE_BIN_LOW, VOICE_BIN_HIGH, 0, 170); // ~2/3 of palette range
+  }
+  
+  // When Color slider is low (< 128), use it to set a fixed base offset instead of cycling
+  uint8_t fixedBaseHue = (SEGMENT.custom1 <= 128) ? (SEGMENT.custom1 << 1) : 0; // 0-256 range when not cycling
+
+  // Particle aging - ALWAYS age particles so display fades to black when sound stops
+  for (uint32_t i = 0; i < PartSys->usedParticles; i++) {
+    if (PartSys->particles[i].ttl > 3)
+      PartSys->particles[i].ttl -= 3; // age particles (ttl affects brightness)
+    else
+      PartSys->particles[i].ttl = 0;
+    
+    // Perlin noise color modulation - only apply when Noise slider > 32 for cleaner colors at low settings
+    if (SEGMENT.custom2 > 32) {
+      int mids = sqrt16((int)fftResult[5] + (int)fftResult[6] + (int)fftResult[7] + (int)fftResult[8] + (int)fftResult[9] + (int)fftResult[10]);
+      int16_t noiseOffset = (mids * perlin8(PartSys->particles[i].x << 2, SEGMENT.step << 2)) >> 9;
+      int16_t hueChange = (noiseOffset * (SEGMENT.custom2 - 32)) >> 8; // scale from threshold
+      PartSys->particles[i].hue = (uint8_t)((PartSys->particles[i].hue + hueChange) & 0xFF);
+    }
+  }
+
+  // Emit particles when there's sound (no hard threshold - like Gravcenter)
+  // scaledVolume > 0.5 means there's meaningful audio
+  if (scaledVolume > 0.5f) {
+    if (hueIncrement > 0) {
+      SEGMENT.aux0 += hueIncrement; // only advance base color when cycling is enabled
+    }
+    
+    // Combine fixed base OR cycling base with vocal color offset
+    uint8_t emitHue = (SEGMENT.custom1 <= 128) ? (fixedBaseHue + vocalColorOffset) : (SEGMENT.aux0 + vocalColorOffset);
+    
+    // Add perlin noise modulation to emit color - only when Noise slider > 32
+    if (SEGMENT.custom2 > 32) {
+      uint8_t noiseVal = perlin8(strip.now >> 2, SEGMENT.aux0);
+      int16_t noiseOffset = ((int16_t)noiseVal - 128) >> 2;
+      int16_t hueChange = (noiseOffset * (SEGMENT.custom2 - 32)) >> 8;
+      emitHue = (uint8_t)((emitHue + hueChange) & 0xFF);
+    }
+    
+    // Particle life: high base ensures particles travel full segment
+    // Volume adds extra life for brighter particles on loud sounds
+    // Base of 200 + volume contribution (like PS Sonic Stream formula)
+    uint32_t life = 200 + (uint32_t)(scaledVolume * 20.0f);
+    if (life > 500) life = 500;
+    
+    PartSys->sources[0].minLife = life;
+    PartSys->sources[0].maxLife = life;
+    PartSys->sources[0].source.hue = emitHue; // hue is used as palette index
+    PartSys->sources[0].size = SEGMENT.speed;
+    PartSys->sources[0].sat = SEGMENT.custom1 > 0 ? 255 : 0; // color slider at zero: set to white
+    
+    if (PartSys->particles[SEGMENT.aux1].x > 3 * PS_P_RADIUS_1D || PartSys->particles[SEGMENT.aux1].ttl == 0) {
+      int partindex = PartSys->sprayEmit(PartSys->sources[0]);
+      if (partindex >= 0) SEGMENT.aux1 = partindex;
+    }
+  }
+
+  PartSys->update();
+
+  if (SEGMENT.check3) { // Push mode
+    PartSys->sources[0].sourceFlags.perpetual = true;
+    PartSys->applyFriction(1);
+    int32_t movestep = (((int)SEGMENT.speed + 2) * loudness) >> 10;
+    if (movestep) {
+      for (uint32_t i = 0; i < PartSys->usedParticles; i++) {
+        if (PartSys->particles[i].ttl) {
+          PartSys->particles[i].x += movestep;
+          PartSys->particles[i].vx = 10 + (SEGMENT.speed >> 4);
+        }
+      }
+    }
+  } else {
+    PartSys->sources[0].sourceFlags.perpetual = false; // emitted particles age
+    // move all particles (again) to allow faster speeds
+    for (uint32_t i = 0; i < PartSys->usedParticles; i++) {
+      if (PartSys->particles[i].vx == 0)
+        PartSys->particles[i].vx = PartSys->sources[0].v; // move static particles (after disabling push mode)
+      PartSys->particleMoveUpdate(PartSys->particles[i], PartSys->particleFlags[i], nullptr, useAdvanced ? &PartSys->advPartProps[i] : nullptr);
+    }
+  }
+
+  return FRAMETIME;
+}
+
+// PS Vocal Stream - Full version (100% particles, advanced properties)
+uint16_t mode_particle1DvocalStream(void) {
+  return mode_particle1DvocalStream_core(255, true);  // 100% particles, advanced
+}
+static const char _data_FX_MODE_PS_VOCALSTREAM[] PROGMEM = "PS Vocal Stream@!,!,Color,Noise,Blur,,,Push;,!;!;1f;c1=128,c2=128";
+
+// PS Vocal Stream Lite - 50% particle density, advanced properties
+uint16_t mode_particle1DvocalStream_lite(void) {
+  return mode_particle1DvocalStream_core(128, true);  // 50% particles, advanced
+}
+static const char _data_FX_MODE_PS_VOCALSTREAM_LITE[] PROGMEM = "PS Vocal Stream Lite@!,!,Color,Noise,Blur,,,Push;,!;!;1f;c1=128,c2=128";
+
+// PS Vocal Stream Basic - 100% particles, no advanced properties
+uint16_t mode_particle1DvocalStream_basic(void) {
+  return mode_particle1DvocalStream_core(255, false);  // 100% particles, no advanced
+}
+static const char _data_FX_MODE_PS_VOCALSTREAM_BASIC[] PROGMEM = "PS Vocal Stream Basic@!,!,Color,Noise,Blur,,,Push;,!;!;1f;c1=128,c2=128";
+
+// PS Vocal Stream Minimal - 50% particles, no advanced properties (most RAM efficient)
+uint16_t mode_particle1DvocalStream_min(void) {
+  return mode_particle1DvocalStream_core(64, false);  // 25% particles, no advanced
+}
+static const char _data_FX_MODE_PS_VOCALSTREAM_MIN[] PROGMEM = "PS Vocal Stream Min@!,!,Color,Noise,Blur,,,Push;,!;!;1f;c1=128,c2=128";
+
+
 /*
 Particles bound by springs
 by DedeHai (Damian Schneider)
@@ -12684,6 +12937,7 @@ void WS2812FX::setupEffectData() {
   addEffect(FX_MODE_TWINKLEUP, &mode_twinkleup, _data_FX_MODE_TWINKLEUP);
   addEffect(FX_MODE_NOISEPAL, &mode_noisepal, _data_FX_MODE_NOISEPAL);
   addEffect(FX_MODE_SINEWAVE, &mode_sinewave, _data_FX_MODE_SINEWAVE);
+  addEffect(FX_MODE_SINEBAR, &mode_sinebar, _data_FX_MODE_SINEBAR);
   addEffect(FX_MODE_PHASEDNOISE, &mode_phased_noise, _data_FX_MODE_PHASEDNOISE);
   addEffect(FX_MODE_FLOW, &mode_flow, _data_FX_MODE_FLOW);
   addEffect(FX_MODE_CHUNCHUN, &mode_chunchun, _data_FX_MODE_CHUNCHUN);
@@ -12828,6 +13082,10 @@ void WS2812FX::setupEffectData() {
   addEffect(FX_MODE_PSFIRE1D, &mode_particleFire1D, _data_FX_MODE_PS_FIRE1D);
   addEffect(FX_MODE_PS1DSONICSTREAM, &mode_particle1DsonicStream, _data_FX_MODE_PS_SONICSTREAM);
   addEffect(FX_MODE_PS1DSONICBOOM, &mode_particle1DsonicBoom, _data_FX_MODE_PS_SONICBOOM);
+  addEffect(FX_MODE_PS1DVOCALSTREAM, &mode_particle1DvocalStream, _data_FX_MODE_PS_VOCALSTREAM);
+  addEffect(FX_MODE_PS1DVOCALSTREAM_LITE, &mode_particle1DvocalStream_lite, _data_FX_MODE_PS_VOCALSTREAM_LITE);
+  addEffect(FX_MODE_PS1DVOCALSTREAM_BASIC, &mode_particle1DvocalStream_basic, _data_FX_MODE_PS_VOCALSTREAM_BASIC);
+  addEffect(FX_MODE_PS1DVOCALSTREAM_MIN, &mode_particle1DvocalStream_min, _data_FX_MODE_PS_VOCALSTREAM_MIN);
   addEffect(FX_MODE_PS1DSPRINGY, &mode_particleSpringy, _data_FX_MODE_PS_SPRINGY);
 #endif // WLED_DISABLE_PARTICLESYSTEM1D
 
