@@ -1213,6 +1213,10 @@ class AudioReactive : public Usermod {
 
     bool updateIsRunning = false; // true during OTA.
 
+    // simulation fallback on silence
+    uint16_t simulationFallbackSec = 0;    // 0 = disabled, otherwise seconds of silence before falling back to simulation
+    unsigned long lastActiveAudioTime = 0; // tracks when we last had meaningful audio (volumeSmth > threshold)
+
 #ifdef ARDUINO_ARCH_ESP32
     // used for AGC
     int      last_soundAgc = -1;   // used to detect AGC mode change (for resetting AGC internal error buffers)
@@ -2133,6 +2137,7 @@ class AudioReactive : public Usermod {
       if (enabled) disableSoundProcessing = false;       // all good - enable audio processing
       // try to start UDP
       last_UDPTime = 0;
+      lastActiveAudioTime = millis(); // initialize to prevent immediate simulation fallback on startup
       receivedFormat = 0;
       delay(100);
       if (enabled) connectUDPSoundSync();
@@ -2314,6 +2319,11 @@ class AudioReactive : public Usermod {
         if (soundAgc) my_magnitude *= multAgc;
         if (volumeSmth < 1 ) my_magnitude = 0.001f;  // noise gate closed - mute
 
+        // Track last time we had meaningful audio (for simulation fallback)
+        if (volumeSmth >= 1.0f) {
+          lastActiveAudioTime = millis();
+        }
+
         // get AGC sensitivity and sound pressure
         static unsigned long lastEstimate = 0;
 #ifdef WLEDMM_FASTPATH
@@ -2378,6 +2388,10 @@ class AudioReactive : public Usermod {
             else volumeSmth = syncVolumeSmth;                   // restore originally received sample for next run of dynamics limiter
             limitSampleDynamics();                              // run dynamics limiter on received volumeSmth, to hide jumps and hickups
             limitGEQDynamics(have_new_sample);                  // WLEDMM experimental: smooth FFT (GEQ) samples
+            // Track last time we had meaningful audio (for simulation fallback)
+            if (volumeSmth >= 1.0f) {
+              lastActiveAudioTime = millis();
+            }
           }
       } else {
           receivedFormat = 0;
@@ -2453,6 +2467,15 @@ class AudioReactive : public Usermod {
     bool getUMData(um_data_t **data) override
     {
       if (!data || !enabled) return false; // no pointer provided by caller or not enabled -> exit
+
+      // Check for simulation fallback on prolonged silence
+      if (simulationFallbackSec > 0 && lastActiveAudioTime > 0) {
+        unsigned long silenceMs = millis() - lastActiveAudioTime;
+        if (silenceMs > (simulationFallbackSec * 1000UL)) {
+          return false; // fall back to simulation
+        }
+      }
+
       *data = um_data;
       return true;
     }
@@ -2866,6 +2889,7 @@ class AudioReactive : public Usermod {
 #ifdef FFT_USE_SLIDING_WINDOW
       poweruser[F("I2S_FastPath")] = doSlidingFFT;
 #endif
+      poweruser[F("sim_fallback_sec")] = simulationFallbackSec;
       JsonObject freqScale = top.createNestedObject("frequency");
       freqScale[F("scale")] = FFTScalingMode;
       freqScale[F("profile")] = pinkIndex; //WLEDMM
@@ -2952,6 +2976,7 @@ class AudioReactive : public Usermod {
 #ifdef FFT_USE_SLIDING_WINDOW
       configComplete &= getJsonValue(top["experiments"][F("I2S_FastPath")], doSlidingFFT);
 #endif
+      configComplete &= getJsonValue(top["experiments"][F("sim_fallback_sec")], simulationFallbackSec);
 
       configComplete &= getJsonValue(top["frequency"][F("scale")], FFTScalingMode);
       configComplete &= getJsonValue(top["frequency"][F("profile")], pinkIndex);  //WLEDMM
@@ -3108,6 +3133,7 @@ class AudioReactive : public Usermod {
       oappend(SET_F("addOption(dd,'On  (⎌)',1);"));
       oappend(SET_F("addInfo(ux+':'+xx+':I2S_FastPath',1,'☾');"));
 #endif
+      oappend(SET_F("addInfo(ux+':'+xx+':sim_fallback_sec',1,'Simulate audio if no audio detected for x secs');"));
 
       oappend(SET_F("dd=addDropdown(ux,'dynamics:limiter');"));
       oappend(SET_F("addOption(dd,'Off',0);"));
