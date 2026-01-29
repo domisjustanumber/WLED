@@ -852,6 +852,34 @@ const byte audio_responsive_gp[] PROGMEM = {
    255, 0, 0, 255
 };
 
+// Gradient palette "vocal_stream_gp"
+// White -> Light Purple -> Purple -> Teal -> Green
+// Created for PS Vocal Stream effect (brightened for LED display)
+const byte vocal_stream_gp[] PROGMEM = {
+    0, 255, 255, 255,  // white
+   64, 220, 180, 255,  // light purple (brightened)
+  128, 160,  80, 255,  // purple (brightened)
+  192, 100, 230, 220,  // teal (brightened)
+  255,  20, 255, 100   // green (brightened)
+};
+
+// Gradient palette "vocal_stream_blend_gp"
+// Based on colors: FFFFFF, BC96E6, 6F2DBD, 48A9A6, 0CCA4A
+// Continuous gradient version with intermediate stops for smooth blending
+const byte vocal_stream_blend_gp[] PROGMEM = {
+    0, 255, 255, 255,  // FFFFFF - white
+   25, 222, 202, 242,  // blend toward light purple
+   51, 188, 150, 230,  // BC96E6 - light purple
+   76, 150,  98, 210,  // blend toward purple
+  102, 111,  45, 189,  // 6F2DBD - purple
+  128,  92,  97, 178,  // blend toward teal
+  153,  72, 169, 166,  // 48A9A6 - teal
+  179,  42, 186, 120,  // blend toward green
+  204,  12, 202,  74,  // 0CCA4A - green
+  230,  12, 202,  74,  // hold green
+  255,  12, 202,  74   // 0CCA4A - green
+};
+
 // Single array of defined cpt-city color palettes.
 // This will let us programmatically choose one based on
 // a number, rather than having to activate each explicitly
@@ -919,6 +947,8 @@ const byte* const gGradientPalettes[] PROGMEM = {
   audio_responsive_gp,          //71-58 AudioResponsive  WLEDMM netmindz ar palette - placeholder1
   audio_responsive_gp,          //72-59 AudioResponsive  WLEDMM netmindz ar palette - placeholder2
   audio_responsive_gp,          //73-60 AudioResponsive  WLEDMM netmindz ar palette - placeholder3
+  vocal_stream_gp,              //74-61 Vocal Stream
+  vocal_stream_blend_gp,        //75-62 Vocal Stream Blend
 };
 
 #endif
