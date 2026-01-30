@@ -1217,6 +1217,26 @@ class AudioReactive : public Usermod {
     uint16_t simulationFallbackSec = 0;    // 0 = disabled, otherwise seconds of silence before falling back to simulation
     unsigned long lastActiveAudioTime = 0; // tracks when we last had meaningful audio (volumeSmth > threshold)
 
+    // preset fallback on silence
+    uint8_t silencePreset = 0;             // 0 = disabled, otherwise preset ID to switch to when silence is detected
+    bool inSilencePresetMode = false;      // true if we're currently showing the silence preset
+
+    // Cached segment state for instant restore (bypasses preset loading)
+    struct SegmentCache {
+        uint8_t mode;           // effect ID
+        uint8_t speed;          // effect speed
+        uint8_t intensity;      // effect intensity
+        uint8_t palette;        // palette ID
+        uint32_t colors[3];     // primary, secondary, tertiary colors
+        uint8_t custom1, custom2, custom3;  // effect custom sliders
+        uint8_t check1, check2, check3;     // effect checkboxes (o1, o2, o3)
+        uint8_t globalBri;      // global brightness
+        uint8_t presetId;       // preset ID for UI display
+        bool valid;             // true if cache contains valid data
+    };
+    SegmentCache cachedActiveState = {0, 0, 0, 0, {0,0,0}, 0, 0, 0, 0, 0, 0, 0, 0, false};
+
+
 #ifdef ARDUINO_ARCH_ESP32
     // used for AGC
     int      last_soundAgc = -1;   // used to detect AGC mode change (for resetting AGC internal error buffers)
@@ -2443,6 +2463,115 @@ class AudioReactive : public Usermod {
       }
 #endif
 
+      // Preset fallback on silence - switch to silence preset when no audio detected
+      if (silencePreset > 0 && simulationFallbackSec > 0 && lastActiveAudioTime > 0) {
+        unsigned long silenceMs = millis() - lastActiveAudioTime;
+        if (silenceMs > (simulationFallbackSec * 1000UL)) {
+          // Silence detected - cache current state and switch to silence preset
+          if (!inSilencePresetMode) {
+            // Cache current segment state in RAM for instant restore later
+            Segment& seg = strip.getMainSegment();
+            cachedActiveState.mode = seg.mode;
+            cachedActiveState.speed = seg.speed;
+            cachedActiveState.intensity = seg.intensity;
+            cachedActiveState.palette = seg.palette;
+            cachedActiveState.colors[0] = seg.colors[0];
+            cachedActiveState.colors[1] = seg.colors[1];
+            cachedActiveState.colors[2] = seg.colors[2];
+            cachedActiveState.custom1 = seg.custom1;
+            cachedActiveState.custom2 = seg.custom2;
+            cachedActiveState.custom3 = seg.custom3;
+            cachedActiveState.check1 = seg.check1;
+            cachedActiveState.check2 = seg.check2;
+            cachedActiveState.check3 = seg.check3;
+            cachedActiveState.globalBri = bri;  // cache global brightness
+            cachedActiveState.presetId = currentPreset;  // cache preset ID for UI
+            cachedActiveState.valid = true;
+            
+            applyPreset(silencePreset, CALL_MODE_DIRECT_CHANGE);
+            inSilencePresetMode = true;
+            DEBUGSR_PRINTF("AR: Silence detected - cached state (preset %d, bri %d) and switching to preset %d\n", 
+                           cachedActiveState.presetId, cachedActiveState.globalBri, silencePreset);
+          }
+        } else {
+          // Audio detected - restore from RAM cache INSTANTLY (no file I/O!)
+          if (inSilencePresetMode && cachedActiveState.valid) {
+            Segment& seg = strip.getMainSegment();
+            seg.speed = cachedActiveState.speed;
+            seg.intensity = cachedActiveState.intensity;
+            seg.palette = cachedActiveState.palette;
+            seg.setColor(0, cachedActiveState.colors[0]);
+            seg.setColor(1, cachedActiveState.colors[1]);
+            seg.setColor(2, cachedActiveState.colors[2]);
+            seg.custom1 = cachedActiveState.custom1;
+            seg.custom2 = cachedActiveState.custom2;
+            seg.custom3 = cachedActiveState.custom3;
+            seg.check1 = cachedActiveState.check1;
+            seg.check2 = cachedActiveState.check2;
+            seg.check3 = cachedActiveState.check3;
+            strip.setMode(strip.getMainSegmentId(), cachedActiveState.mode);
+            
+            // Restore global variables for UI
+            effectCurrent = cachedActiveState.mode;
+            effectSpeed = cachedActiveState.speed;
+            effectIntensity = cachedActiveState.intensity;
+            effectPalette = cachedActiveState.palette;
+            
+            // Restore global brightness
+            bri = cachedActiveState.globalBri;
+            
+            // Restore preset ID for UI display
+            currentPreset = cachedActiveState.presetId;
+            
+            // Mark state as changed and trigger UI update
+            stateChanged = true;
+            stateUpdated(CALL_MODE_DIRECT_CHANGE);
+            
+            inSilencePresetMode = false;
+            cachedActiveState.valid = false;
+            DEBUGSR_PRINTF("AR: Audio detected - restored from RAM cache (preset %d, bri %d)\n", 
+                           currentPreset, bri);
+          }
+        }
+      } else {
+        // silencePreset disabled - restore from cache if we were in silence mode
+        if (inSilencePresetMode && cachedActiveState.valid) {
+          Segment& seg = strip.getMainSegment();
+          seg.speed = cachedActiveState.speed;
+          seg.intensity = cachedActiveState.intensity;
+          seg.palette = cachedActiveState.palette;
+          seg.setColor(0, cachedActiveState.colors[0]);
+          seg.setColor(1, cachedActiveState.colors[1]);
+          seg.setColor(2, cachedActiveState.colors[2]);
+          seg.custom1 = cachedActiveState.custom1;
+          seg.custom2 = cachedActiveState.custom2;
+          seg.custom3 = cachedActiveState.custom3;
+          seg.check1 = cachedActiveState.check1;
+          seg.check2 = cachedActiveState.check2;
+          seg.check3 = cachedActiveState.check3;
+          strip.setMode(strip.getMainSegmentId(), cachedActiveState.mode);
+          
+          // Restore global variables for UI
+          effectCurrent = cachedActiveState.mode;
+          effectSpeed = cachedActiveState.speed;
+          effectIntensity = cachedActiveState.intensity;
+          effectPalette = cachedActiveState.palette;
+          
+          // Restore global brightness
+          bri = cachedActiveState.globalBri;
+          
+          // Restore preset ID for UI display
+          currentPreset = cachedActiveState.presetId;
+          
+          // Mark state as changed and trigger UI update
+          stateChanged = true;
+          stateUpdated(CALL_MODE_DIRECT_CHANGE);
+          
+          inSilencePresetMode = false;
+          cachedActiveState.valid = false;
+        }
+      }
+
 #ifdef ARDUINO_ARCH_ESP32
       //UDP Microphone Sync  - transmit mode
     #if defined(WLEDMM_FASTPATH)
@@ -2890,6 +3019,8 @@ class AudioReactive : public Usermod {
       poweruser[F("I2S_FastPath")] = doSlidingFFT;
 #endif
       poweruser[F("sim_fallback_sec")] = simulationFallbackSec;
+      poweruser[F("sim_speed")] = simulationSpeed;
+      poweruser[F("silence_preset")] = silencePreset;
       JsonObject freqScale = top.createNestedObject("frequency");
       freqScale[F("scale")] = FFTScalingMode;
       freqScale[F("profile")] = pinkIndex; //WLEDMM
@@ -2977,6 +3108,8 @@ class AudioReactive : public Usermod {
       configComplete &= getJsonValue(top["experiments"][F("I2S_FastPath")], doSlidingFFT);
 #endif
       configComplete &= getJsonValue(top["experiments"][F("sim_fallback_sec")], simulationFallbackSec);
+      configComplete &= getJsonValue(top["experiments"][F("sim_speed")], simulationSpeed);
+      configComplete &= getJsonValue(top["experiments"][F("silence_preset")], silencePreset);
 
       configComplete &= getJsonValue(top["frequency"][F("scale")], FFTScalingMode);
       configComplete &= getJsonValue(top["frequency"][F("profile")], pinkIndex);  //WLEDMM
@@ -3134,6 +3267,8 @@ class AudioReactive : public Usermod {
       oappend(SET_F("addInfo(ux+':'+xx+':I2S_FastPath',1,'☾');"));
 #endif
       oappend(SET_F("addInfo(ux+':'+xx+':sim_fallback_sec',1,'Simulate audio if no audio detected for x secs');"));
+      oappend(SET_F("addInfo(ux+':'+xx+':sim_speed',1,'Simulation speed (0=slow, 128=normal, 255=fast)');"));
+      oappend(SET_F("addInfo(ux+':'+xx+':silence_preset',1,'Preset to play when silent (0=off), returns to previous when audio resumes');"));
 
       oappend(SET_F("dd=addDropdown(ux,'dynamics:limiter');"));
       oappend(SET_F("addOption(dd,'Off',0);"));

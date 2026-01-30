@@ -640,6 +640,9 @@ WLED_GLOBAL byte effectIntensity _INIT(128);
 WLED_GLOBAL byte effectPalette _INIT(0);
 WLED_GLOBAL bool stateChanged _INIT(false);
 
+// sound simulation (for audio-reactive effects fallback)
+WLED_GLOBAL uint8_t simulationSpeed _INIT(128);  // simulation sweep speed: 0=slowest (0.1x), 128=normal (1x), 255=fastest (2x)
+
 // network
 WLED_GLOBAL bool udpConnected _INIT(false), udp2Connected _INIT(false), udpRgbConnected _INIT(false);
 

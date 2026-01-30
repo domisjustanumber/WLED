@@ -542,11 +542,16 @@ um_data_t* simulateSound(uint8_t simulationId)
 
   uint32_t ms = millis();
 
+  // Calculate speed multiplier from simulationSpeed (0-255)
+  // 0 -> 0.1x speed (12 BPM from base 120), 128 -> 1.0x speed, 255 -> 2.0x speed (240 BPM from base 120)
+  // Formula: speedMult = 0.1 + (simulationSpeed / 255.0) * 1.9, range [0.1 to 2.0]
+  float speedMult = 0.1f + (simulationSpeed / 255.0f) * 1.9f;
+
   switch (simulationId) {
     default:
     case UMS_BeatSin:
       for (int i = 0; i<16; i++)
-        fftResult[i] = beatsin8_t(120 / (i+1), 0, 255);
+        fftResult[i] = beatsin8_t((uint16_t)(120 * speedMult) / (i+1), 0, 255);
         // fftResult[i] = (beatsin8_t(120, 0, 255) + (256/16 * i)) % 256;
         volumeSmth = fftResult[8];
       break;
@@ -584,12 +589,12 @@ um_data_t* simulateSound(uint8_t simulationId)
       break;
     case UMS_10_13:
       for (int i = 0; i<16; i++)
-        fftResult[i] = perlin8(beatsin8_t(90 / (i+1), 0, 200)*15 + (ms>>10), ms>>3);
+        fftResult[i] = perlin8(beatsin8_t((uint16_t)(90 * speedMult) / (i+1), 0, 200)*15 + (ms>>10), ms>>3);
         volumeSmth = fftResult[8];
       break;
     case UMS_14_3:
       for (int i = 0; i<16; i++)
-        fftResult[i] = perlin8(beatsin8_t(120 / (i+1), 10, 30)*10 + (ms>>14), ms>>3);
+        fftResult[i] = perlin8(beatsin8_t((uint16_t)(120 * speedMult) / (i+1), 10, 30)*10 + (ms>>14), ms>>3);
       volumeSmth = fftResult[8];
       break;
   }
