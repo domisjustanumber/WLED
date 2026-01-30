@@ -11402,10 +11402,8 @@ uint16_t mode_particleDancingShadows(void) {
 
   // Particle System settings
   PartSys->updateSystem(); // update system properties (dimensions and data pointers)
-  PartSys->setMotionBlur(SEGMENT.custom1);
-  if (SEGMENT.check1)
-    PartSys->setSmearBlur(120); // enable smear blur
-  else
+  PartSys->setMotionBlur(map(SEGMENT.custom3, 0, 255, 20, 240)); // prevent 255 (no fade), map to 20-240
+  PartSys->setSmearBlur(200); // match PS Sonic Stream defaulte
     PartSys->setSmearBlur(0); // disable smear blur
   PartSys->setParticleSize(SEGMENT.check3); // 1 or 2 pixel rendering
   PartSys->setColorByPosition(SEGMENT.check2); // color fixed by position
@@ -12454,8 +12452,9 @@ static uint16_t mode_particle1DvocalStream_core(uint8_t particleFraction, bool u
 
   // Particle System settings
   PartSys->updateSystem();
-  PartSys->setMotionBlur(SEGMENT.custom3 >> 1); // blur range 0-15 (custom3 is 0-31)
-  PartSys->setSmearBlur(200);
+  // Enhanced blur/aliasing between particles
+  PartSys->setMotionBlur(80 + (SEGMENT.custom3 >> 1)); // 80-207 range for much stronger trails
+  PartSys->setSmearBlur(255); // maximum spatial blur for heavy blending between particles
   PartSys->sources[0].v = 5 + (SEGMENT.speed >> 2);
 
   // Audio processing - use volumeSmth like Gravcenter (proven to work with real microphone)
@@ -12470,9 +12469,9 @@ static uint16_t mode_particle1DvocalStream_core(uint8_t particleFraction, bool u
   // Convert to integer for particle calculations (0-255 range after scaling)
   uint32_t loudness = (uint32_t)constrain(scaledVolume * 8.0f, 0.0f, 255.0f);
 
-  // Voice frequency analysis for COLOR (bins 2-7: ~86-861Hz covers voice fundamentals)
-  const uint32_t VOICE_BIN_LOW = 2;
-  const uint32_t VOICE_BIN_HIGH = 7;
+  // Voice frequency analysis for COLOR (bins 1-8: ~43-1290Hz covers full human speech range)
+  const uint32_t VOICE_BIN_LOW = 1;  // ~43Hz - deep male voices
+  const uint32_t VOICE_BIN_HIGH = 8; // ~1290Hz - high female/child voices
   
   uint32_t maxEnergy = 0;
   uint32_t dominantBin = 4; // default to middle of voice range
@@ -12490,21 +12489,22 @@ static uint16_t mode_particle1DvocalStream_core(uint8_t particleFraction, bool u
   // When Color slider > 128, base hue cycles over time for more variety
   uint32_t hueIncrement = (SEGMENT.custom1 > 128) ? ((SEGMENT.custom1 - 128) >> 2) : 0; // only cycle when slider > 128
   
-  // Calculate vocal influence on color (maps dominant voice bin to full palette range)
+  // Calculate vocal influence on color - enhanced range for clear color changes in speech
   // This is the PRIMARY color control - voice frequency determines color position in palette
   uint8_t vocalColorOffset = 0;
-  if (voiceEnergy > 20) { // only apply vocal coloring if there's meaningful voice energy
-    // Map voice bins to wider palette range for more distinct colors per frequency
-    vocalColorOffset = map(dominantBin, VOICE_BIN_LOW, VOICE_BIN_HIGH, 0, 170); // ~2/3 of palette range
+  if (voiceEnergy > 15) { // lower threshold for more responsive coloring
+    // Map voice bins to FULL palette range for maximum color distinction
+    // Deep voices (bin 1) = reds/oranges, mid voices (bin 4) = greens, high voices (bin 8) = blues/purples
+    vocalColorOffset = map(dominantBin, VOICE_BIN_LOW, VOICE_BIN_HIGH, 0, 255); // full palette range
   }
   
   // When Color slider is low (< 128), use it to set a fixed base offset instead of cycling
   uint8_t fixedBaseHue = (SEGMENT.custom1 <= 128) ? (SEGMENT.custom1 << 1) : 0; // 0-256 range when not cycling
 
-  // Particle aging - ALWAYS age particles so display fades to black when sound stops
+  // Particle aging - gentler aging for smoother brightness transitions like PS Sonic Stream
   for (uint32_t i = 0; i < PartSys->usedParticles; i++) {
-    if (PartSys->particles[i].ttl > 3)
-      PartSys->particles[i].ttl -= 3; // age particles (ttl affects brightness)
+    if (PartSys->particles[i].ttl > 2)
+      PartSys->particles[i].ttl -= 2; // slower aging for smoother fade-out
     else
       PartSys->particles[i].ttl = 0;
     
