@@ -853,31 +853,29 @@ const byte audio_responsive_gp[] PROGMEM = {
 };
 
 // Gradient palette "vocal_stream_gp"
-// White -> Light Purple -> Purple -> Teal -> Green
-// Created for PS Vocal Stream effect (brightened for LED display)
+// Purple -> Light Purple -> Green -> Teal -> White
+// Created for PS Vocal Stream effect (matches vocal_stream_blend color order)
 const byte vocal_stream_gp[] PROGMEM = {
-    0, 255, 255, 255,  // white
-   64, 220, 180, 255,  // light purple (brightened)
-  128, 160,  80, 255,  // purple (brightened)
-  192, 100, 230, 220,  // teal (brightened)
-  255,  20, 255, 100   // green (brightened)
+    0, 111,  45, 189,  // 6F2DBD - purple
+   64, 188, 150, 230,  // BC96E6 - light purple
+  128,  12, 202,  74,  // 0CCA4A - green
+  192,  72, 169, 166,  // 48A9A6 - teal
+  255, 255, 255, 255   // FFFFFF - white
 };
 
 // Gradient palette "vocal_stream_blend_gp"
-// Based on colors: FFFFFF, BC96E6, 6F2DBD, 48A9A6, 0CCA4A
-// Continuous gradient version with intermediate stops for smooth blending
+// 8 stages to match FFT bins 1-8 used in PS Vocal Stream effect
+// Purple (bins 1-2) -> Green (bins 3-5) -> White (bins 6-8)
+// Optimized for maximum visibility of voice type changes
 const byte vocal_stream_blend_gp[] PROGMEM = {
-    0, 255, 255, 255,  // FFFFFF - white
-   25, 222, 202, 242,  // blend toward light purple
-   51, 188, 150, 230,  // BC96E6 - light purple
-   76, 150,  98, 210,  // blend toward purple
-  102, 111,  45, 189,  // 6F2DBD - purple
-  128,  92,  97, 178,  // blend toward teal
-  153,  72, 169, 166,  // 48A9A6 - teal
-  179,  42, 186, 120,  // blend toward green
-  204,  12, 202,  74,  // 0CCA4A - green
-  230,  12, 202,  74,  // hold green
-  255,  12, 202,  74   // 0CCA4A - green
+    0, 147,  51, 234,  // Bin 1: 9333EA - bright purple (deep male ~43Hz)
+   36, 147,  51, 234,  // Bin 2: 9333EA - bright purple (male ~86Hz)
+   73,  34, 197,  94,  // Bin 3: 22C55E - bright green (transition ~172Hz)
+  109,  34, 197,  94,  // Bin 4: 22C55E - bright green (female low ~258Hz)
+  146,  34, 197,  94,  // Bin 5: 22C55E - bright green (female mid ~430Hz)
+  182, 255, 255, 255,  // Bin 6: FFFFFF - white (female high ~516Hz)
+  219, 255, 255, 255,  // Bin 7: FFFFFF - white (child ~860Hz)
+  255, 255, 255, 255   // Bin 8: FFFFFF - white (highest ~1290Hz)
 };
 
 // Single array of defined cpt-city color palettes.

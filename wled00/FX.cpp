@@ -12469,33 +12469,43 @@ static uint16_t mode_particle1DvocalStream_core(uint8_t particleFraction, bool u
   // Convert to integer for particle calculations (0-255 range after scaling)
   uint32_t loudness = (uint32_t)constrain(scaledVolume * 8.0f, 0.0f, 255.0f);
 
-  // Voice frequency analysis for COLOR (bins 1-8: ~43-1290Hz covers full human speech range)
-  const uint32_t VOICE_BIN_LOW = 1;  // ~43Hz - deep male voices
+  // Voice frequency analysis for COLOR (bins 3-8: ~172-1290Hz covers speech range, bin 3 as lowest)
+  const uint32_t VOICE_BIN_LOW = 3;  // ~172Hz - start of speech frequency range
   const uint32_t VOICE_BIN_HIGH = 8; // ~1290Hz - high female/child voices
   
-  uint32_t maxEnergy = 0;
-  uint32_t dominantBin = 4; // default to middle of voice range
+  // Calculate weighted frequency centroid for smooth, sensitive color response
+  // This gives continuous values instead of discrete 8-bin jumps
+  uint32_t weightedSum = 0;
   uint32_t voiceEnergy = 0;
   
   for (uint32_t i = VOICE_BIN_LOW; i <= VOICE_BIN_HIGH; i++) {
-    voiceEnergy += fftResult[i];
-    if (fftResult[i] > maxEnergy) {
-      maxEnergy = fftResult[i];
-      dominantBin = i;
-    }
+    uint32_t energy = fftResult[i];
+    // Square the energy to emphasize peaks (more dramatic response to dominant frequencies)
+    uint32_t weight = (energy * energy) >> 6; // scale down to prevent overflow
+    weightedSum += i * weight;
+    voiceEnergy += weight;
   }
+  
+  // Calculate centroid - the "center of mass" of voice frequencies
+  // Gives a continuous value between 3.0 and 8.0 representing the frequency center
+  float centroid = (voiceEnergy > 0) ? (float)weightedSum / (float)voiceEnergy : 5.5f;
+  
+  // Clamp centroid to valid range
+  centroid = constrain(centroid, (float)VOICE_BIN_LOW, (float)VOICE_BIN_HIGH);
 
   // Color calculation: vocal frequencies directly control color when Color slider is low
   // When Color slider > 128, base hue cycles over time for more variety
   uint32_t hueIncrement = (SEGMENT.custom1 > 128) ? ((SEGMENT.custom1 - 128) >> 2) : 0; // only cycle when slider > 128
   
-  // Calculate vocal influence on color - enhanced range for clear color changes in speech
+  // Calculate vocal influence on color - using continuous centroid for smooth transitions
   // This is the PRIMARY color control - voice frequency determines color position in palette
   uint8_t vocalColorOffset = 0;
-  if (voiceEnergy > 15) { // lower threshold for more responsive coloring
-    // Map voice bins to FULL palette range for maximum color distinction
-    // Deep voices (bin 1) = reds/oranges, mid voices (bin 4) = greens, high voices (bin 8) = blues/purples
-    vocalColorOffset = map(dominantBin, VOICE_BIN_LOW, VOICE_BIN_HIGH, 0, 255); // full palette range
+  if (voiceEnergy > 10) { // lower threshold for more responsive coloring
+    // Map centroid (3.0-8.0) to FULL palette range (0-255) for maximum color distinction
+    // Normal mapping: Low frequencies (bin 3) → low palette index (0)
+    //                High frequencies (bin 8) → high palette index (255)
+    float normalized = (centroid - (float)VOICE_BIN_LOW) / (float)(VOICE_BIN_HIGH - VOICE_BIN_LOW);
+    vocalColorOffset = (uint8_t)(normalized * 255.0f); // normal mapping (no inversion)
   }
   
   // When Color slider is low (< 128), use it to set a fixed base offset instead of cycling
